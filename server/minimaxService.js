@@ -393,7 +393,7 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   }
 
   // ── Common Guards & Classifiers ──────────────────────────────────────────
-  const startsWithMutatingAction = /^(add|buy|order|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
+  const startsWithMutatingAction = /^(add|buy|order|put|get|i\s+need|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
   const startsWithAction = startsWithMutatingAction;
 
   const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
@@ -725,24 +725,61 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
     return null; // Defer to LLM — do NOT short-circuit as CHAT
   }
 
-  // ── 12. ADD Intent ───────────────────────────────────────────────────────
-  if (/^(add|buy|i\s+need|put|get|order)\b/.test(lower)) {
-    const clean = lower
-      .replace(/^(add|buy|i\s+need|put|get|order)\s+/i, "")
-      .replace(/\s+(to\s+(my\s+|the\s+)?(cart|card|car|list|basket)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now|for\s+me)$/gi, "")
-      .trim();
+const KNOWN_MULTI_WORD_ITEMS = new Map([
+  ["oat milk", "oat milk"],
+  ["almond milk", "almond milk"],
+  ["sourdough bread", "sourdough bread"],
+  ["sourdough boule", "sourdough bread"],
+  ["olive oil", "olive oil"],
+  ["dish soap", "dish soap"],
+  ["cold brew", "cold brew coffee"],
+  ["cold brew coffee", "cold brew coffee"],
+  ["orange juice", "orange juice"],
+  ["potato chips", "potato chips"],
+  ["dark chocolate", "dark chocolate"],
+  ["green tea", "green tea"],
+  ["basmati rice", "basmati rice"],
+  ["whole milk", "whole milk"],
+  ["gala apples", "gala apples"],
+  ["honeycrisp apples", "honeycrisp apples"],
+  ["brown eggs", "brown eggs"],
+  ["irish butter", "irish butter"],
+  ["almond butter", "almond butter"],
+  ["peanut butter", "peanut butter"],
+  ["mineral water", "mineral water"],
+  ["sparkling water", "sparkling water"],
+  ["chicken breast", "chicken breast"],
+  ["chicken breasts", "chicken breasts"],
+  ["burger buns", "burger buns"],
+  ["french croissants", "croissants"],
+  ["everything bagels", "bagels"]
+]);
 
-    // Reject noise-only leftovers
-    if (["cart", "card", "car", "the cart", "my cart", "order", "checkout", "everything", "list", "something"].includes(clean)) {
-      return null;
-    }
+const KNOWN_SINGLE_WORD_ITEMS = new Set([
+  "milk", "chocolate", "banana", "bananas", "bread", "eggs", "egg", "butter", "cheese", "yogurt",
+  "rice", "atta", "flour", "honey", "chicken", "salmon", "tofu", "coffee", "juice", "water",
+  "soda", "chips", "almonds", "nuts", "soap", "toothpaste", "apples", "apple", "avocado",
+  "avocados", "spinach", "strawberries", "strawberry", "blueberries", "blueberry", "tomatoes",
+  "tomato", "lemons", "lemon", "bagels", "bagel", "croissants", "croissant", "buns", "tea", "pasta"
+]);
 
-    // Parse multiple items separated by comma/and/+
-    const rawChunks = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
+/**
+ * Robust helper: extracts multiple grocery items and quantities from natural speech text.
+ * Handles:
+ *  - Conjunction / comma-separated lists: "milk, 2 bread and bananas"
+ *  - Space-separated product lists: "Milk chocolate banana"
+ *  - Quantity-prefixed lists: "2 milk 1 chocolate 3 banana"
+ */
+function extractMultipleItemsFromText(cleanText) {
+  if (!cleanText || typeof cleanText !== "string") return [];
+  const text = cleanText.trim();
+  if (!text) return [];
+
+  // 1. If text contains explicit conjunctions or commas, split by them
+  if (/\s*(?:,|and|&|\+|also)\s*/i.test(text)) {
+    const rawChunks = text.split(/\s*(?:,|and|&|\+|also)\s*/i).filter(Boolean);
     const items = [];
-
     for (const chunk of rawChunks) {
-      // Match: [quantity] [unit?] [of?] item_name
       const match = chunk.match(/^(?:(\d+)\s*(?:bottles?|packs?|boxes?|bunches?|loaves?|loaf|lbs?|items?|bags?|cans?|jars?|liters?|litres?|kg|grams?|oz)?\s*(?:of\s+)?)?(.+)$/i);
       if (match) {
         const qty = match[1] ? parseInt(match[1], 10) : 1;
@@ -754,6 +791,70 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
         }
       }
     }
+    if (items.length > 0) return items;
+  }
+
+  // 2. Scan space-separated tokens for single or multi-word catalog products
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const items = [];
+  let i = 0;
+
+  while (i < tokens.length) {
+    let qty = 1;
+    // Check if current token is a quantity digit
+    if (/^\d+$/.test(tokens[i])) {
+      qty = parseInt(tokens[i], 10) || 1;
+      i++;
+      if (i >= tokens.length) break;
+      // Skip unit words if present (e.g. "bottles", "packs", "of")
+      if (/^(bottles?|packs?|boxes?|bunches?|loaves?|loaf|lbs?|items?|bags?|cans?|jars?|liters?|litres?|kg|grams?|oz|of)$/i.test(tokens[i])) {
+        i++;
+        if (i < tokens.length && /^of$/i.test(tokens[i])) i++;
+        if (i >= tokens.length) break;
+      }
+    }
+
+    // Try 2-word known grocery item match first
+    if (i + 1 < tokens.length) {
+      const twoWordKey = `${tokens[i]} ${tokens[i + 1]}`.toLowerCase();
+      if (KNOWN_MULTI_WORD_ITEMS.has(twoWordKey)) {
+        items.push({ name: KNOWN_MULTI_WORD_ITEMS.get(twoWordKey), quantity: Math.max(1, qty), unit: "item" });
+        i += 2;
+        continue;
+      }
+    }
+
+    // Single-word grocery item match
+    const singleWordKey = tokens[i].toLowerCase().replace(/^(the|a|an|some)\s+/gi, "").trim();
+    if (KNOWN_SINGLE_WORD_ITEMS.has(singleWordKey)) {
+      items.push({ name: singleWordKey, quantity: Math.max(1, qty), unit: "item" });
+      i++;
+      continue;
+    }
+
+    // Non-dictionary fallback token
+    if (singleWordKey && singleWordKey.length >= 2 && !["into", "in", "to", "cart", "card", "the", "a", "an", "for", "me", "please", "now", "on", "list"].includes(singleWordKey)) {
+      items.push({ name: singleWordKey, quantity: Math.max(1, qty), unit: "item" });
+    }
+    i++;
+  }
+
+  return items;
+}
+
+  // ── 12. ADD Intent ───────────────────────────────────────────────────────
+  if (/^(add|buy|i\s+need|put|get|order)\b/.test(lower)) {
+    const clean = lower
+      .replace(/^(add|buy|i\s+need|put|get|order)\s+/i, "")
+      .replace(/\s+(?:(?:in)?to\s+(?:my\s+|the\s+)?(?:cart|card|car|list|shopping\s+list|basket|bag)|in\s+(?:my\s+|the\s+)?(?:cart|card|car|list|basket)|on\s+(?:my\s+|the\s+)?(?:list|cart)|please|now|for\s+me|as\s+well)$/gi, "")
+      .trim();
+
+    // Reject noise-only leftovers
+    if (["cart", "card", "car", "the cart", "my cart", "order", "checkout", "everything", "list", "something"].includes(clean)) {
+      return null;
+    }
+
+    const items = extractMultipleItemsFromText(clean);
 
     if (items.length > 0) {
       return {
