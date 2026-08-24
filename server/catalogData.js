@@ -550,7 +550,7 @@ export const PRODUCT_CATALOG = [
     substitutes: [],
     consumptionCycleDays: 20,
     emoji: "🥣",
-    image: "https://images.unsplash.com/photo-1517673132405-a56a62b18caf?auto=format&fit=crop&w=400&q=80",
+    image: "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80",
     description: "Kiln-toasted old fashioned rolled oats for wholesome morning oatmeal and baking."
   },
 
