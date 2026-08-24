@@ -2,8 +2,8 @@
 // Maintains dialogue history, entity context, pronoun resolution, and conversational state across voice turns.
 
 class ConversationMemoryManager {
-  constructor(maxTurns = 12, ttlMs = 30 * 60 * 1000) {
-    this.maxTurns = maxTurns;
+  constructor(maxTurns = 15, ttlMs = 30 * 60 * 1000) {
+    this.maxTurns = maxTurns; // Maintains up to 15 conversational turns
     this.ttlMs = ttlMs; // 30 mins session TTL
     this.sessions = new Map();
   }
@@ -46,6 +46,7 @@ class ConversationMemoryManager {
     intent,
     spokenFeedback,
     items = [],
+    product = null,
     uiAction = null,
     recommendations = [],
     searchResults = []
@@ -58,6 +59,12 @@ class ConversationMemoryManager {
     if (items && items.length > 0) {
       session.context.lastMentionedItem = items[items.length - 1];
       session.context.lastMentionedItems = items;
+    } else if (product) {
+      session.context.lastMentionedItem = product;
+      session.context.lastMentionedItems = [product];
+    } else if (searchResults && searchResults.length > 0) {
+      session.context.lastMentionedItem = searchResults[0];
+      session.context.lastMentionedItems = searchResults;
     }
 
     if (uiAction?.type === "SET_CATEGORY") {
@@ -83,12 +90,12 @@ class ConversationMemoryManager {
       role: "assistant",
       content: spokenFeedback,
       intent,
-      items,
+      items: items.length > 0 ? items : (product ? [product] : []),
       uiAction,
       timestamp: Date.now()
     });
 
-    // 3. Trim to sliding window
+    // 3. Trim to sliding window (keeps up to maxTurns pairs)
     if (session.turns.length > this.maxTurns * 2) {
       session.turns = session.turns.slice(-this.maxTurns * 2);
     }
@@ -98,9 +105,9 @@ class ConversationMemoryManager {
   }
 
   /**
-   * Returns conversation history formatted for LLM messages array.
+   * Returns conversation history formatted for LLM messages array (default: last 5 conversations / 10 turns).
    */
-  getHistoryForLLM(sessionId = "default_session", maxPairs = 4) {
+  getHistoryForLLM(sessionId = "default_session", maxPairs = 5) {
     const session = this.getSession(sessionId);
     const turns = session.turns || [];
     const count = Math.min(turns.length, maxPairs * 2);
@@ -110,6 +117,31 @@ class ConversationMemoryManager {
       role: t.role,
       content: t.content
     }));
+  }
+
+  /**
+   * Formats the last N conversational exchanges into a clean textual summary for LLM prompt context injection.
+   */
+  getRecentExchangesFormatted(sessionId = "default_session", count = 5) {
+    const session = this.getSession(sessionId);
+    const turns = session.turns || [];
+    if (turns.length === 0) return "No previous conversation history in this session.";
+
+    const pairs = [];
+    for (let i = 0; i < turns.length; i += 2) {
+      const userTurn = turns[i];
+      const botTurn = turns[i + 1];
+      if (userTurn && botTurn) {
+        pairs.push({
+          user: userTurn.content,
+          bot: botTurn.content,
+          intent: botTurn.intent
+        });
+      }
+    }
+
+    const recent = pairs.slice(-count);
+    return recent.map((p, idx) => `${idx + 1}. User: "${p.user}" → VoiceCart AI: "${p.bot}" [Intent: ${p.intent || 'GENERAL'}]`).join("\n");
   }
 
   /**

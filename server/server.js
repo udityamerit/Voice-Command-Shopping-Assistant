@@ -569,13 +569,14 @@ app.post("/api/voice/process", async (req, res) => {
       }
     }
 
-    // 3. Record dialogue turn in Conversation Memory
+    // 3. Record dialogue turn in Conversation Memory (Tracks last 5 conversations)
     const speechText = finalSpokenFeedback || nlpResult.spokenFeedback || "Your cart has been updated.";
     ConversationMemory.addTurn(sessionId, {
       userTranscript: transcript,
       intent,
       spokenFeedback: speechText,
-      items: nlpResult.items || [],
+      items: (nlpResult.items && nlpResult.items.length > 0) ? nlpResult.items : (nlpResult.product ? [nlpResult.product] : (searchResults?.[0] ? [searchResults[0]] : [])),
+      product: nlpResult.product || searchResults?.[0] || null,
       uiAction,
       recommendations: recommendationData?.replenishment?.map(r => r.product?.name) || [],
       searchResults

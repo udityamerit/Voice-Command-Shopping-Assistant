@@ -619,8 +619,51 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   }
 
   // ── 18. CONVERSATIONAL CONTEXT FOLLOW-UPS (Pronouns & Anaphora) ──────────
-  // Uses conversation memory to resolve: "actually make it 3", "make that 4", "remove it", "add those"
+  // Uses conversation memory to resolve: "actually make it 3", "make that 4", "remove it", "add those", "add it to cart", "how much is it"
   const memoryContext = sessionId ? ConversationMemory.getContext(sessionId) : null;
+
+  // Contextual single-item add: "add it", "add it to cart", "put it in my cart", "buy it", "add that", "add this"
+  if (
+    /^(?:actually\s+)?(?:add|buy|get|put|order)\s+(?:it|that|this)(?:\s+(?:in|to|into)\s+(?:my\s+|the\s+)?(?:cart|list))?$/i.test(lower) &&
+    memoryContext?.lastMentionedItem
+  ) {
+    const targetItem = memoryContext.lastMentionedItem;
+    return {
+      intent: "ADD",
+      detectedLanguage: "en",
+      spokenFeedback: `Adding ${targetItem.name} to your cart.`,
+      items: [{ name: targetItem.name, quantity: 1, unit: targetItem.unit || "item" }]
+    };
+  }
+
+  // Contextual quantity pronoun add: "add 2 of it", "add 3 of them", "buy 2 of those", "get 4 of that"
+  const qtyPronounAddMatch = lower.match(/^(?:actually\s+)?(?:add|buy|get|put|order)\s+(\d+)\s+(?:of\s+)?(?:it|that|them|those)(?:\s+(?:in|to|into)\s+(?:my\s+|the\s+)?(?:cart|list))?$/i);
+  if (qtyPronounAddMatch && memoryContext?.lastMentionedItem) {
+    const qty = parseInt(qtyPronounAddMatch[1], 10) || 1;
+    const targetItem = memoryContext.lastMentionedItem;
+    return {
+      intent: "ADD",
+      detectedLanguage: "en",
+      spokenFeedback: `Adding ${qty}x ${targetItem.name} to your cart.`,
+      items: [{ name: targetItem.name, quantity: qty, unit: targetItem.unit || "item" }]
+    };
+  }
+
+  // Contextual price check: "how much is it", "what is its price", "what does it cost", "price of it"
+  if (
+    /^(?:how\s+much\s+(?:is|does)\s+(?:it|that|this)(?:\s+cost)?|what(?:'s|\s+is)\s+(?:its|the)\s+price|price\s+of\s+it)$/i.test(lower) &&
+    memoryContext?.lastMentionedItem
+  ) {
+    const targetItem = memoryContext.lastMentionedItem;
+    return {
+      intent: "PRODUCT_INFO",
+      detectedLanguage: "en",
+      spokenFeedback: `${targetItem.name} is $${(targetItem.price || 4.99).toFixed(2)}${targetItem.isSale ? ` (${targetItem.discountPercent}% off)` : ''} for ${targetItem.unit || 'each'}.`,
+      uiAction: { type: "SEARCH_STORE", payload: targetItem.name },
+      product: targetItem,
+      items: []
+    };
+  }
 
   // Contextual quantity adjustment: "make it 3", "change it to 4", "set it to 2", "actually make it 3"
   const contextModMatch = lower.match(/^(?:actually\s+)?(?:make|change|update|set)\s+(?:it|that|them)\s+(?:to\s+)?(\d+)$/i);
@@ -966,15 +1009,17 @@ async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pa
     }
   }
 
-  // Retrieve multi-turn conversation memory
-  const dialogueHistory = ConversationMemory.getHistoryForLLM(sessionId, 4);
+  // Retrieve multi-turn conversation memory (Last 5 conversations / 10 turns)
+  const dialogueHistory = ConversationMemory.getHistoryForLLM(sessionId, 5);
   const memoryContext = ConversationMemory.getContext(sessionId);
-  let memoryContextSnippet = "";
+  const recentExchangesText = ConversationMemory.getRecentExchangesFormatted(sessionId, 5);
+
+  let memoryContextSnippet = `\n--- Multi-Turn Conversation Memory (Last 5 Context Exchanges) ---\n${recentExchangesText}\n`;
   if (memoryContext?.lastMentionedItem) {
-    memoryContextSnippet += `\nConversation Context: Last discussed item: "${memoryContext.lastMentionedItem.name}" (qty: ${memoryContext.lastMentionedItem.quantity || 1}).`;
+    memoryContextSnippet += `Active Focused Entity: "${memoryContext.lastMentionedItem.name}" (qty: ${memoryContext.lastMentionedItem.quantity || 1}).\n`;
   }
   if (memoryContext?.lastRecommendedItems?.length > 0) {
-    memoryContextSnippet += `\nLast recommended items: ${memoryContext.lastRecommendedItems.join(', ')}.`;
+    memoryContextSnippet += `Active Recommended Items: ${memoryContext.lastRecommendedItems.join(', ')}.\n`;
   }
 
   const categorizedCatalog = `
@@ -990,7 +1035,7 @@ Category Breakdown of all 24 items in the store:
 All groceries are delivered fresh in 10 minutes.`;
 
   const systemPrompt = `You are VoiceCart AI, the intelligent voice assistant controlling the entire 10-minute grocery delivery website.
-You have full conversational memory of previous turns. Use it to resolve pronouns ("it", "those", "that", "them"), follow-up commands ("actually make it 3", "remove it", "add those"), and context.
+You have full conversational memory of previous turns. Use it to resolve pronouns ("it", "those", "that", "them"), follow-up commands ("actually make it 3", "remove it", "add those", "how much is it"), and context.
 You have full access to scan and control every part of the website: product catalog, shopping cart, categories, dietary filters, price slider, dark/light theme, hands-free mode, and sidebar tabs.
 
 ${websiteContextSnippet}${memoryContextSnippet}
