@@ -133,33 +133,37 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 9. REMOVE Intent
+  // 9. REMOVE Intent (e.g. "remove the milk from the card", "delete bread", "take out apples")
   if (lower.startsWith("remove") || lower.startsWith("delete") || lower.startsWith("take out") || lower.startsWith("drop")) {
     const clean = lower
       .replace(/^(remove|delete|take\s+out|drop)\s+/i, "")
-      .replace(/\s+(from\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
+      .replace(/\s+(from\s+(my\s+|the\s+)?(cart|card|car|list)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
       .trim();
 
     const parts = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
-    const items = parts.map(p => ({ name: p.trim(), quantity: 1 }));
+    const items = parts.map(p => {
+      const name = p.trim().replace(/^(the|a|an|some|my|all|pack of|bottle of|bottles of|box of|loaf of)\s+/gi, "").trim();
+      return { name: name || p.trim(), quantity: 1 };
+    });
     return {
       intent: "REMOVE",
       detectedLanguage: "en",
-      spokenFeedback: `Removing ${clean} from your cart.`,
+      spokenFeedback: `Removing ${items.map(i => i.name).join(", ")} from your cart.`,
       items
     };
   }
 
-  // 10. MODIFY_QTY Intent
-  const modMatch = lower.match(/(?:change|make|update|set|increase|decrease)\s+([a-z\s]+?)\s+(?:quantity\s+)?(?:to\s+)?(\d+)/i);
+  // 10. MODIFY_QTY Intent (e.g. "change the milk to 3", "update milk to 2", "make eggs 4", "change quantity of bread to 2")
+  const modMatch = lower.match(/(?:change|make|update|set|increase|decrease)\s+(?:the\s+|my\s+|quantity\s+of\s+)?([a-z\s]+?)\s+(?:quantity\s+)?(?:to\s+)?(\d+)/i);
   if (modMatch) {
-    const targetItem = modMatch[1].replace(/quantity|of|the|my/gi, "").trim();
+    const rawTarget = modMatch[1].replace(/quantity|of|the|my|from|cart|card|car/gi, "").trim();
+    const cleanName = rawTarget.replace(/^(the|a|an|some|my|all)\s+/gi, "").trim();
     const qty = parseInt(modMatch[2], 10);
     return {
       intent: "MODIFY_QTY",
       detectedLanguage: "en",
-      spokenFeedback: `Updating quantity of ${targetItem} to ${qty}.`,
-      items: [{ name: targetItem, quantity: qty }]
+      spokenFeedback: `Updating quantity of ${cleanName || rawTarget} to ${qty}.`,
+      items: [{ name: cleanName || rawTarget, quantity: qty }]
     };
   }
 

@@ -239,6 +239,52 @@ app.delete("/api/shopping-list", (req, res) => {
   res.json({ message: "Shopping list cleared", data: [] });
 });
 
+function findCartItem(targetStr, cartList) {
+  if (!targetStr || typeof targetStr !== "string") return null;
+
+  // Clean determiners and noise words
+  const cleanTarget = targetStr.toLowerCase()
+    .replace(/^(the|a|an|some|my|all|pack of|bottle of|bottles of|box of|loaf of|bunch of)\s+/gi, "")
+    .replace(/\s+(from\s+(my\s+|the\s+)?(cart|card|car|list)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
+    .trim();
+
+  if (!cleanTarget) return null;
+
+  // 1. Direct name or partial match
+  const directMatch = cartList.find(i => {
+    const itemName = i.name.toLowerCase();
+    return itemName === cleanTarget || itemName.includes(cleanTarget) || cleanTarget.includes(itemName);
+  });
+  if (directMatch) return directMatch;
+
+  // 2. Catalog-assisted alias matching (e.g. user says "milk", matches "dairy_milk_whole")
+  const matchedCatalog = findCatalogProduct(cleanTarget);
+  if (matchedCatalog) {
+    const byId = cartList.find(i => i.productId === matchedCatalog.id);
+    if (byId) return byId;
+  }
+
+  // 3. Word token overlap
+  const targetTokens = cleanTarget.split(/\s+/).filter(t => t.length > 2);
+  let bestItem = null;
+  let highestOverlap = 0;
+
+  for (const item of cartList) {
+    const itemTokens = item.name.toLowerCase().split(/\s+/);
+    let count = 0;
+    for (const tok of targetTokens) {
+      if (itemTokens.some(it => it.includes(tok) || tok.includes(it))) count++;
+    }
+    if (count > highestOverlap) {
+      highestOverlap = count;
+      bestItem = item;
+    }
+  }
+
+  if (highestOverlap > 0) return bestItem;
+  return null;
+}
+
 // -------------------------------------------------------------
 // Voice Command AI Endpoint (MiniMax-M3 LLM + Neural TTS)
 // -------------------------------------------------------------
@@ -303,18 +349,16 @@ app.post("/api/voice/process", async (req, res) => {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
         const removed = [];
         for (const target of nlpResult.items) {
-          const targetName = (target.name || "").toLowerCase().trim();
-          const initialLen = shoppingList.length;
-          const matchIndex = shoppingList.findIndex(i =>
-            i.name.toLowerCase() === targetName ||
-            i.name.toLowerCase().includes(targetName) ||
-            targetName.includes(i.name.toLowerCase())
-          );
+          const targetName = target.name || "";
+          const found = findCartItem(targetName, shoppingList);
 
-          if (matchIndex !== -1) {
-            const removedItem = shoppingList.splice(matchIndex, 1)[0];
-            removed.push(removedItem.name);
-            actionsTaken.push(`Removed ${removedItem.name}`);
+          if (found) {
+            const index = shoppingList.indexOf(found);
+            if (index !== -1) {
+              const removedItem = shoppingList.splice(index, 1)[0];
+              removed.push(removedItem.name);
+              actionsTaken.push(`Removed ${removedItem.name}`);
+            }
           }
         }
         if (removed.length > 0) {
@@ -327,20 +371,18 @@ app.post("/api/voice/process", async (req, res) => {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
         const modified = [];
         for (const mod of nlpResult.items) {
-          const targetName = (mod.name || "").toLowerCase().trim();
-          const existing = shoppingList.find(i =>
-            i.name.toLowerCase() === targetName ||
-            i.name.toLowerCase().includes(targetName) ||
-            targetName.includes(i.name.toLowerCase())
-          );
-          if (existing && mod.quantity) {
-            existing.quantity = Math.max(1, parseInt(mod.quantity, 10));
-            actionsTaken.push(`Adjusted ${existing.name} quantity to ${existing.quantity}`);
-            modified.push(`${existing.name} to ${existing.quantity}`);
+          const targetName = mod.name || "";
+          const found = findCartItem(targetName, shoppingList);
+          if (found && mod.quantity) {
+            found.quantity = Math.max(1, parseInt(mod.quantity, 10));
+            actionsTaken.push(`Adjusted ${found.name} quantity to ${found.quantity}`);
+            modified.push(`${found.name} to ${found.quantity}`);
           }
         }
         if (modified.length > 0) {
           finalSpokenFeedback = `Updated quantity of ${modified.join(", ")}.`;
+        } else {
+          finalSpokenFeedback = `I couldn't find '${nlpResult.items.map(i => i.name).join(", ")}' in your cart.`;
         }
       }
     } else if (intent === "CLEAR") {
