@@ -108,14 +108,20 @@ class VoiceShoppingApp {
         const hudStatus = document.getElementById("hudStatus");
         const userTextInput = document.getElementById("liveUserTextInput");
         const heroMicIcon = document.getElementById("heroMicIcon");
+        const floatingMic = document.getElementById("floatingMicBtn");
+        const floatingMicIcon = document.getElementById("floatingMicIcon");
+        const floatingVoiceHint = document.getElementById("floatingVoiceHint");
 
         if (listening) {
           this.stopAssistantSpeaking();
           heroMic?.classList.add("listening");
           searchMic?.classList.add("listening");
           hudOrb?.classList.add("listening");
+          floatingMic?.classList.add("listening");
           if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone-lines";
+          if (floatingMicIcon) floatingMicIcon.className = "fa-solid fa-microphone-lines";
           if (hudStatus) hudStatus.textContent = "Listening... Speak your grocery command";
+          if (floatingVoiceHint) floatingVoiceHint.textContent = "Listening... Speak now";
           if (userTextInput && !userTextInput.value) {
             userTextInput.placeholder = "Listening... Speak your command now...";
           }
@@ -124,8 +130,11 @@ class VoiceShoppingApp {
           heroMic?.classList.remove("listening");
           searchMic?.classList.remove("listening");
           hudOrb?.classList.remove("listening");
+          floatingMic?.classList.remove("listening");
           if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone";
+          if (floatingMicIcon) floatingMicIcon.className = "fa-solid fa-microphone";
           if (hudStatus) hudStatus.textContent = "Listening continuously... Speak your grocery commands";
+          if (floatingVoiceHint) floatingVoiceHint.innerHTML = 'Click or press <kbd>Space</kbd>';
           if (userTextInput) {
             userTextInput.placeholder = 'Type or speak command... (e.g. "Add 2 oat milks", "What is in my cart?")';
           }
@@ -143,6 +152,24 @@ class VoiceShoppingApp {
   }
 
   initEventListeners() {
+    // Floating Voice Widget Scroll Listener
+    const floatingWidget = document.getElementById("floatingVoiceWidget");
+    window.addEventListener("scroll", () => {
+      if (window.scrollY > 240) {
+        floatingWidget?.classList.add("visible");
+      } else {
+        floatingWidget?.classList.remove("visible");
+      }
+    }, { passive: true });
+
+    // Floating Voice Button Click
+    const triggerFloatingVoice = () => {
+      this.stopAssistantSpeaking();
+      this.voiceHandler.toggleListening(false);
+    };
+    document.getElementById("floatingMicBtn")?.addEventListener("click", triggerFloatingVoice);
+    document.getElementById("floatingVoiceLabel")?.addEventListener("click", triggerFloatingVoice);
+
     // Inline YOU form submission (Type & Press Enter or Click Arrow)
     document.getElementById("userTextForm")?.addEventListener("submit", (e) => {
       e.preventDefault();

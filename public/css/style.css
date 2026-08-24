@@ -2498,3 +2498,126 @@ body {
     margin-bottom: 0;
   }
 }
+
+/* ==========================================================================
+   Floating Voice Assistant Popup Widget (Scroll-Activated FAB)
+   ========================================================================== */
+.floating-voice-widget {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-full);
+  padding: 0.45rem 1rem 0.45rem 0.45rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(16, 185, 129, 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(24px) scale(0.95);
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.floating-voice-widget.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.floating-voice-orb {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.floating-voice-orb:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 22px rgba(16, 185, 129, 0.8);
+}
+
+.floating-orb-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid #10b981;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.floating-voice-orb.listening {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.8);
+  animation: pulseListen 1.5s infinite;
+}
+
+.floating-voice-orb.listening .floating-orb-pulse {
+  animation: ringExpand 1.5s infinite;
+  border-color: #ef4444;
+}
+
+.floating-voice-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.floating-voice-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #f0fdf4;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.floating-voice-title i {
+  color: #10b981;
+  font-size: 0.75rem;
+}
+
+.floating-voice-hint {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.floating-voice-hint kbd {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: #e2e8f0;
+}
+
+@media (max-width: 768px) {
+  .floating-voice-widget {
+    bottom: 5.5rem;
+    right: 1rem;
+    padding: 0.35rem 0.85rem 0.35rem 0.35rem;
+  }
+  .floating-voice-orb {
+    width: 44px;
+    height: 44px;
+    font-size: 1rem;
+  }
+}

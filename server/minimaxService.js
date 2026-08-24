@@ -31,8 +31,11 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 2. CLEAR Intent (Handles "clear my cart", "clear my card", "empty cart", "reset cart")
-  if (/^(clear|empty|reset|delete\s+all)\s*(all|my|the)?\s*(shopping\s*list|cart|card|car|items|everything)?$/i.test(lower) || lower === "clear" || lower === "empty cart" || lower === "clear my card") {
+  // 2. CLEAR Intent (Handles "remove all the items present in my cart", "clear my cart", "empty cart", "delete everything")
+  if (/^(clear|empty|reset|delete\s+all|remove\s+all|delete\s+everything|remove\s+everything)/i.test(lower) || 
+      lower.includes("remove all") || lower.includes("delete all") || lower.includes("clear all") || 
+      lower.includes("empty cart") || lower.includes("clear my card") || lower.includes("clear cart") ||
+      lower === "clear" || lower === "empty") {
     return {
       intent: "CLEAR",
       detectedLanguage: "en",
