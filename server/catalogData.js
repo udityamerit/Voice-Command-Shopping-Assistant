@@ -274,7 +274,7 @@ export const PRODUCT_CATALOG = [
     substitutes: ["dairy_milk_oat", "dairy_milk_whole"],
     consumptionCycleDays: 10,
     emoji: "🥛",
-    image: "https://images.unsplash.com/photo-1549488344-cbb6c34cf08b?auto=format&fit=crop&w=400&q=80",
+    image: "https://images.unsplash.com/photo-1528750997573-59b89d56f4f7?auto=format&fit=crop&w=400&q=80",
     description: "Ultra-smooth California almond milk with gentle, naturally nutty flavor."
   },
   {
