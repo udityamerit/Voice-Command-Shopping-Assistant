@@ -13,6 +13,8 @@ class VoiceShoppingApp {
     this.activeCategory = "All";
     this.lastAudioDataUrl = null;
     this.isHandsFree = false;
+    this.sessionId = localStorage.getItem("voicecart_session_id") || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    localStorage.setItem("voicecart_session_id", this.sessionId);
 
     this.init();
   }
@@ -482,8 +484,13 @@ class VoiceShoppingApp {
       // 1. Scan live website DOM and entire state
       const pageContext = PageScanner.scan();
 
-      // 2. Process voice command with live website context
-      const result = await ApiClient.processVoiceCommand(transcript, lang, persona, pageContext);
+      // 2. Process voice command with live website context & multi-turn memory
+      const result = await ApiClient.processVoiceCommand(transcript, lang, persona, pageContext, this.sessionId);
+
+      // Show Auto-Correct feedback if speech recognition had a typo
+      if (result.autoCorrect && result.autoCorrect.hasChanges) {
+        UI.showToast(`✨ Auto-corrected: "${result.autoCorrect.original}" → "${result.autoCorrect.corrected}"`, "info", "fa-wand-magic-sparkles");
+      }
 
       // Update Intent Badge
       if (aiBadge) aiBadge.textContent = result.intent;

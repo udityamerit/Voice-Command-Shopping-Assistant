@@ -45,11 +45,11 @@ export const ApiClient = {
     return res.json();
   },
 
-  async processVoiceCommand(transcript, language = "en", voiceId = "English_expressive_narrator", pageContext = null) {
+  async processVoiceCommand(transcript, language = "en", voiceId = "English_expressive_narrator", pageContext = null, sessionId = "default_session") {
     const res = await fetch(`${BASE_URL}/api/voice/process`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transcript, language, voiceId, pageContext })
+      body: JSON.stringify({ transcript, language, voiceId, pageContext, sessionId })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

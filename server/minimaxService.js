@@ -2,6 +2,8 @@
 import dotenv from "dotenv";
 import { PRODUCT_CATALOG, CATEGORIES } from "./catalogData.js";
 import { searchCatalog, getProductSubstitutes, getPredictiveReplenishment, getSeasonalAndSaleRecommendations } from "./recommendationEngine.js";
+import { autoCorrectTranscript } from "./autoCorrectService.js";
+import { ConversationMemory } from "./conversationMemory.js";
 
 dotenv.config();
 
@@ -114,7 +116,7 @@ function chunkCompoundQuery(transcript) {
 // Precisely classifies standard shopping intents without calling LLM.
 // All regex patterns are carefully ordered and scoped to avoid conflicts.
 // -----------------------------------------------------------------------
-function fastPathClassify(userTranscript, currentShoppingList = [], pageContext = null) {
+function fastPathClassify(userTranscript, currentShoppingList = [], pageContext = null, sessionId = "default_session") {
   if (!userTranscript || typeof userTranscript !== "string") return null;
   const raw = userTranscript.trim();
   // Normalize for matching: lowercase, strip punctuation
@@ -395,6 +397,7 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   );
 
   const isRecommendationQuery = /\b(recommend|recommendations?|suggest|suggestions?|restock|deplet|depletion|deals?|seasonal)\b/i.test(lower);
+  const hasPriceFilter = /under\s+\$?\d/i.test(lower);
 
   if (isCartQuery && !startsWithMutatingAction && !hasPriceFilter && !isRecommendationQuery) {
     return {
@@ -424,7 +427,10 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   }
 
   // ── 15. GET_RECOMMENDATIONS Intent ───────────────────────────────────────
-  if (/^(what\s+should\s+i\s+(buy|get|add)|what\s+do\s+i\s+need|recommendations?|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items?|specials?|fruits?)|suggestions?|suggest\s+something|what('s|\s+is)\s+on\s+sale)$/.test(lower)) {
+  if (
+    /^(what\s+should\s+i\s+(buy|get|add)|what\s+do\s+i\s+need|what\s+do\s+you\s+recommend(\s+for\s+restock)?|recommendations?|what\s+are\s+(my\s+|the\s+)?recommendations?|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items?|specials?|fruits?)|suggestions?|suggest\s+something|what('s|\s+is)\s+on\s+sale)$/i.test(lower) ||
+    /\bwhat\s+(do\s+you\s+)?recommend\b/i.test(lower)
+  ) {
     return {
       intent: "GET_RECOMMENDATIONS",
       detectedLanguage: "en",
@@ -468,6 +474,49 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
       items: [],
       searchParams: { query: cleanQuery, maxPrice },
       uiAction: { type: "SEARCH_STORE", payload: { query: cleanQuery, maxPrice }, scrollTarget: "productsSection" }
+    };
+  }
+
+  // ── 18. CONVERSATIONAL CONTEXT FOLLOW-UPS (Pronouns & Anaphora) ──────────
+  // Uses conversation memory to resolve: "actually make it 3", "make that 4", "remove it", "add those"
+  const memoryContext = sessionId ? ConversationMemory.getContext(sessionId) : null;
+
+  // Contextual quantity adjustment: "make it 3", "change it to 4", "set it to 2", "actually make it 3"
+  const contextModMatch = lower.match(/^(?:actually\s+)?(?:make|change|update|set)\s+(?:it|that|them)\s+(?:to\s+)?(\d+)$/i);
+  if (contextModMatch && memoryContext?.lastMentionedItem) {
+    const targetItem = memoryContext.lastMentionedItem;
+    const qty = parseInt(contextModMatch[1], 10);
+    return {
+      intent: "MODIFY_QTY",
+      detectedLanguage: "en",
+      spokenFeedback: `Updating ${targetItem.name} to ${qty}.`,
+      items: [{ name: targetItem.name, quantity: qty }]
+    };
+  }
+
+  // Contextual item removal: "remove it", "delete it", "take it out", "remove that"
+  if (/^(?:actually\s+)?(?:remove|delete|take\s+out|drop)\s+(?:it|that|them)$/i.test(lower) && memoryContext?.lastMentionedItem) {
+    const targetItem = memoryContext.lastMentionedItem;
+    return {
+      intent: "REMOVE",
+      detectedLanguage: "en",
+      spokenFeedback: `Removing ${targetItem.name} from your cart.`,
+      items: [{ name: targetItem.name, quantity: 1 }]
+    };
+  }
+
+  // Contextual recommendation add: "all of them add to the cart", "add all of them", "add those", "add that", "add them", "add recommended"
+  if (
+    /^(?:all\s+of\s+them\s+add\s+to\s+(?:the\s+)?cart|add\s+all\s+(?:of\s+them|items?|recommended)?(?:\s+to\s+(?:my\s+|the\s+)?cart)?|(?:add|buy|get)\s+(?:those|that|them|the\s+recommended|recommended\s+items?)(?:\s+to\s+(?:my\s+|the\s+)?cart)?)$/i.test(lower) &&
+    memoryContext?.lastRecommendedItems?.length > 0
+  ) {
+    const recNames = memoryContext.lastRecommendedItems.slice(0, 3);
+    const items = recNames.map(name => ({ name, quantity: 1, unit: "item" }));
+    return {
+      intent: "ADD",
+      detectedLanguage: "en",
+      spokenFeedback: `Adding recommended items (${recNames.join(", ")}) to your cart.`,
+      items
     };
   }
 
@@ -607,51 +656,60 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
  *  4. MiniMax-M3 LLM for complex/multilingual queries
  *  5. Rule-based fallback if network fails
  */
-export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = [], pageContext = null) {
+export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = [], pageContext = null, sessionId = "default_session") {
   if (!userTranscript || userTranscript.trim() === "") {
     return {
       intent: "CHAT",
       spokenFeedback: "I didn't catch that. Could you please repeat your shopping command?",
       items: [],
-      detectedLanguage: "en"
+      detectedLanguage: "en",
+      autoCorrect: { hasChanges: false, original: "", corrected: "" }
     };
   }
 
-  // 1. Server-side normalization
-  const normalized = normalizeServerTranscript(userTranscript);
+  // 1. Intelligent Speech Autocorrection & Fuzzy Matching
+  const autoCorrectResult = autoCorrectTranscript(userTranscript);
+  const transcriptToProcess = autoCorrectResult.corrected;
 
-  // 2. Multi-intent chunking
+  // 2. Server-side normalization
+  const normalized = normalizeServerTranscript(transcriptToProcess);
+
+  // 3. Multi-intent chunking
   const chunks = chunkCompoundQuery(normalized);
 
+  let finalResult;
   // For single-chunk queries (the vast majority), use the standard flow
   if (chunks.length === 1) {
-    return await classifyAndExecuteSingleChunk(chunks[0], currentShoppingList, pageContext);
+    finalResult = await classifyAndExecuteSingleChunk(chunks[0], currentShoppingList, pageContext, sessionId);
+  } else {
+    // For multi-chunk compound commands, process each sub-intent and merge results
+    const results = [];
+    for (const chunk of chunks) {
+      const result = await classifyAndExecuteSingleChunk(chunk, currentShoppingList, pageContext, sessionId);
+      results.push(result);
+    }
+    // Merge multi-intent results into one consolidated response
+    finalResult = mergeMultiIntentResults(results, normalized);
   }
 
-  // For multi-chunk compound commands, process each sub-intent and merge results
-  const results = [];
-  for (const chunk of chunks) {
-    const result = await classifyAndExecuteSingleChunk(chunk, currentShoppingList, pageContext);
-    results.push(result);
-  }
-
-  // Merge multi-intent results into one consolidated response
-  return mergeMultiIntentResults(results, normalized);
+  // Attach autocorrect metadata so client knows if speech typo was fixed
+  finalResult.autoCorrect = autoCorrectResult;
+  return finalResult;
 }
 
 /**
  * Classifies and returns a NLU result for a single atomic query chunk.
  */
-async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pageContext = null) {
-  // Fast-path classifier with live page context
-  const fastResult = fastPathClassify(transcript, currentShoppingList, pageContext);
+async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pageContext = null, sessionId = "default_session") {
+  // Fast-path classifier with live page context & conversation memory
+  const fastResult = fastPathClassify(transcript, currentShoppingList, pageContext, sessionId);
   if (fastResult) {
     console.log(`[NLU Fast-Path] "${transcript}" → ${fastResult.intent}`);
     return fastResult;
   }
 
-  // Complex/multilingual/conversational → MiniMax-M3 LLM with full website awareness
-  console.log(`[NLU LLM Call] "${transcript}" — deferring to MiniMax-M3 with live website context`);
+  // Complex/multilingual/conversational → MiniMax-M3 LLM with full website awareness & memory
+  console.log(`[NLU LLM Call] "${transcript}" (session: ${sessionId}) — deferring to MiniMax-M3 with live context & dialogue memory`);
   const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} ($${p.price.toFixed(2)}, ${p.category})`).join(", ");
 
   // Build live website context description
@@ -670,10 +728,22 @@ async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pa
     }
   }
 
+  // Retrieve multi-turn conversation memory
+  const dialogueHistory = ConversationMemory.getHistoryForLLM(sessionId, 4);
+  const memoryContext = ConversationMemory.getContext(sessionId);
+  let memoryContextSnippet = "";
+  if (memoryContext?.lastMentionedItem) {
+    memoryContextSnippet += `\nConversation Context: Last discussed item: "${memoryContext.lastMentionedItem.name}" (qty: ${memoryContext.lastMentionedItem.quantity || 1}).`;
+  }
+  if (memoryContext?.lastRecommendedItems?.length > 0) {
+    memoryContextSnippet += `\nLast recommended items: ${memoryContext.lastRecommendedItems.join(', ')}.`;
+  }
+
   const systemPrompt = `You are VoiceCart AI, the intelligent voice assistant controlling the entire 10-minute grocery delivery website.
+You have full conversational memory of previous turns. Use it to resolve pronouns ("it", "those", "that", "them"), follow-up commands ("actually make it 3", "remove it", "add those"), and context.
 You have full access to scan and control every part of the website: product catalog, shopping cart, categories, dietary filters, price slider, dark/light theme, hands-free mode, and sidebar tabs.
 
-${websiteContextSnippet}
+${websiteContextSnippet}${memoryContextSnippet}
 Store Catalog: ${catalogProductNames}
 
 Valid intents:
@@ -714,6 +784,13 @@ User Spoken Command: "${transcript}"`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout for remote LLM
 
+    // Construct LLM messages including previous conversation turns
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...dialogueHistory,
+      { role: "user", content: userPrompt }
+    ];
+
     const response = await fetch(`${MINIMAX_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -723,12 +800,9 @@ User Spoken Command: "${transcript}"`;
       signal: controller.signal,
       body: JSON.stringify({
         model: "MiniMax-M3",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
+        messages,
         temperature: 0.1,
-        max_tokens: 500  // FIX: Increased from 250 to handle multi-item responses
+        max_tokens: 500
       })
     });
     clearTimeout(timeoutId);

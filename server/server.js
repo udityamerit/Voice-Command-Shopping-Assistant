@@ -17,6 +17,7 @@ import {
   parseVoiceCommandWithMiniMax,
   generateMiniMaxSpeech
 } from "./minimaxService.js";
+import { ConversationMemory } from "./conversationMemory.js";
 
 dotenv.config();
 
@@ -376,16 +377,22 @@ async function executeSingleIntent(nlpResult, shoppingList, originalTranscript) 
 // Voice Command AI Endpoint (MiniMax-M3 LLM + Neural TTS)
 // -------------------------------------------------------------
 app.post("/api/voice/process", async (req, res) => {
-  const { transcript, language = "en", voiceId = "English_radiant_girl", pageContext = null } = req.body;
+  const {
+    transcript,
+    language = "en",
+    voiceId = "English_radiant_girl",
+    pageContext = null,
+    sessionId = "default_session"
+  } = req.body;
 
   if (!transcript || transcript.trim() === "") {
     return res.status(400).json({ error: "Voice transcript is required" });
   }
 
   try {
-    // 1. Parse NLP Intent using MiniMax-M3 LLM (with normalization + chunking + live website DOM awareness)
-    const nlpResult = await parseVoiceCommandWithMiniMax(transcript, shoppingList, pageContext);
-    console.log(`[Voice] Transcript: "${transcript}" → Intent: ${nlpResult.intent}`);
+    // 1. Parse NLP Intent using MiniMax-M3 LLM (with autocorrection + multi-turn memory + live website DOM awareness)
+    const nlpResult = await parseVoiceCommandWithMiniMax(transcript, shoppingList, pageContext, sessionId);
+    console.log(`[Voice] Transcript: "${transcript}" (autocorrected: "${nlpResult.autoCorrect?.corrected || transcript}") → Intent: ${nlpResult.intent}`);
     const intent = nlpResult.intent || "CHAT";
     let actionsTaken = [];
     let searchResults = null;
@@ -547,17 +554,31 @@ app.post("/api/voice/process", async (req, res) => {
         finalSpokenFeedback = `Order placed successfully! Total is $${total}. Your fresh groceries are arriving in 10 minutes.`;
         actionsTaken.push(`Placed order #${orderId} for $${total}`);
         shoppingList = []; // Clear cart on checkout
+        ConversationMemory.clearSession(sessionId); // Clear conversation memory on checkout
       }
     }
 
-    // 3. Synthesize Spoken Audio using MiniMax Speech-2.8-HD TTS
+    // 3. Record dialogue turn in Conversation Memory
     const speechText = finalSpokenFeedback || nlpResult.spokenFeedback || "Your cart has been updated.";
+    ConversationMemory.addTurn(sessionId, {
+      userTranscript: transcript,
+      intent,
+      spokenFeedback: speechText,
+      items: nlpResult.items || [],
+      uiAction,
+      recommendations: recommendationData?.replenishment?.map(r => r.product?.name) || [],
+      searchResults
+    });
+
+    // 4. Synthesize Spoken Audio using MiniMax Speech-2.8-HD TTS
     console.log(`[Voice] Response: "${speechText}" | Actions: ${actionsTaken.length}`);
     const ttsResult = await generateMiniMaxSpeech(speechText, voiceId);
 
     res.json({
       success: true,
       transcript,
+      autoCorrect: nlpResult.autoCorrect || null,
+      sessionId,
       nlp: nlpResult,
       intent,
       uiAction,
