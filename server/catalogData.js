@@ -720,7 +720,7 @@ export const PRODUCT_CATALOG = [
     substitutes: ["snack_almonds_roasted"],
     consumptionCycleDays: 8,
     emoji: "🍫",
-    image: "https://images.unsplash.com/photo-1548907040-4baa42d10919?auto=format&fit=crop&w=400&q=80",
+    image: "https://images.unsplash.com/photo-1606313564200-e75d5e30476c?auto=format&fit=crop&w=400&q=80",
     description: "Micro-batch dark chocolate sweetened with organic coconut sugar and hand-harvested sea salt."
   },
   {
@@ -769,7 +769,7 @@ export const PRODUCT_CATALOG = [
     substitutes: [],
     consumptionCycleDays: 30,
     emoji: "🧼",
-    image: "https://images.unsplash.com/photo-1584483766114-2cea6facdf57?auto=format&fit=crop&w=400&q=80",
+    image: "https://images.unsplash.com/photo-1583947215259-38e31be8751f?auto=format&fit=crop&w=400&q=80",
     description: "Tough on grease, gentle on hands with fresh zesty citrus essential oils."
   },
   {
@@ -791,7 +791,7 @@ export const PRODUCT_CATALOG = [
     substitutes: [],
     consumptionCycleDays: 45,
     emoji: "🪥",
-    image: "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=400&q=80",
+    image: "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=400&q=80",
     description: "Naturally sourced fluoride-free whitening toothpaste flavored with real wild peppermint."
   }
 ];
