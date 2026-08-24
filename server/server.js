@@ -408,11 +408,23 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
 
-// Start Server
-app.listen(PORT, () => {
+// Start Server with Error Handling
+const server = app.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`🛒 Voice Command Shopping Assistant Server Running!`);
   console.log(`📡 URL: http://localhost:${PORT}`);
   console.log(`🧠 AI Engine: MiniMax-M3 LLM + Speech-2.8-HD TTS`);
   console.log(`=======================================================`);
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    const nextPort = Number(PORT) + 1;
+    console.warn(`⚠️ Port ${PORT} was busy. Starting on fallback port ${nextPort}...`);
+    app.listen(nextPort, () => {
+      console.log(`🛒 Server running on fallback URL: http://localhost:${nextPort}`);
+    });
+  } else {
+    console.error("Server startup error:", err);
+  }
 });
