@@ -1,0 +1,27 @@
+{
+  "name": "voice-command-shopping-assistant",
+  "version": "1.0.0",
+  "description": "An industry-grade AI-powered Voice Command Shopping Assistant with MiniMax-M3 LLM NLP, Neural TTS, and Smart Recommendations",
+  "main": "server/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node server/tests/api.test.js"
+  },
+  "keywords": [
+    "voice-assistant",
+    "shopping-list",
+    "minimax-ai",
+    "speech-recognition",
+    "smart-recommendations",
+    "nlp"
+  ],
+  "author": "Engineering Candidate",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

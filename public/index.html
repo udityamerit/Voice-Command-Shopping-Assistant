@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceCart - 10 Min Grocery Delivery & Voice Shopping Assistant</title>
+  <meta name="description" content="Shop groceries in seconds using natural human voice commands. Powered by MiniMax-M3 LLM and Ultra-Natural Speech Synthesis.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Top Announcement / Flash Strip -->
+  <div class="top-flash-bar">
+    <div class="top-flash-content">
+      <span class="flash-tag">⚡ FLASH DELIVERY</span>
+      <span>Superfast 10-minute grocery delivery • Order by voice or tap!</span>
+      <span class="flash-sub">Powered by MiniMax-M3 Multi-Modal AI</span>
+    </div>
+  </div>
+
+  <!-- Global Header (Amazon Fresh / Blinkit Inspired) -->
+  <header class="main-header">
+    <div class="header-inner">
+      <!-- Left: Logo & Location -->
+      <div class="header-left">
+        <a href="/" class="brand-logo">
+          <div class="logo-badge">
+            <i class="fa-solid fa-bolt-lightning"></i>
+          </div>
+          <div class="brand-titles">
+            <span class="logo-main">Voice<span class="logo-accent">Cart</span></span>
+            <span class="delivery-time-badge">⚡ 10 MINS</span>
+          </div>
+        </a>
+
+        <!-- Delivery Location Selector -->
+        <div class="location-picker" title="Change delivery location">
+          <div class="loc-icon"><i class="fa-solid fa-location-dot"></i></div>
+          <div class="loc-text">
+            <span class="loc-label">Delivery in 10 mins</span>
+            <span class="loc-address">Home - 221B Baker St, New York ▾</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center: Universal Smart Search with Voice Trigger -->
+      <div class="header-center">
+        <div class="search-bar-container">
+          <i class="fa-solid fa-magnifying-glass search-leading-icon"></i>
+          <input 
+            type="text" 
+            id="globalSearchInput" 
+            placeholder='Search "milk", "organic apples", "snacks under $5" or tap the mic to speak...'
+            autocomplete="off"
+          >
+          
+          <!-- Embedded Voice Trigger Button -->
+          <button id="searchBarMicBtn" class="search-mic-btn" title="Speak your shopping command (Spacebar)">
+            <i class="fa-solid fa-microphone"></i>
+            <span class="mic-wave-ring"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Right: Voice Persona, Language, Theme & Live Cart Button -->
+      <div class="header-right">
+        <!-- Natural Voice Persona Selector -->
+        <div class="voice-picker-pill">
+          <i class="fa-solid fa-waveform-lines"></i>
+          <select id="voicePersonaSelect" aria-label="Select Voice Persona">
+            <option value="English_radiant_girl">✨ Radiant Girl (Ultra-Natural)</option>
+            <option value="English_CalmWoman">🌿 Calm Woman (Soothing)</option>
+            <option value="English_FriendlyPerson">🤝 Friendly Guy (Warm)</option>
+            <option value="English_Graceful_Lady">👑 Graceful Lady</option>
+            <option value="hindi_female_2_v1">🇮🇳 Hindi Female (Natural)</option>
+            <option value="French_FemaleAnchor">🇫🇷 French Presenter</option>
+          </select>
+        </div>
+
+        <!-- Language Selector -->
+        <div class="lang-picker-pill">
+          <i class="fa-solid fa-globe"></i>
+          <select id="langSelect" aria-label="Speech Recognition Language">
+            <option value="en-US">EN</option>
+            <option value="es-ES">ES</option>
+            <option value="fr-FR">FR</option>
+            <option value="de-DE">DE</option>
+            <option value="hi-IN">HI</option>
+            <option value="zh-CN">ZH</option>
+            <option value="ja-JP">JA</option>
+          </select>
+        </div>
+
+        <!-- Hands-Free Kitchen Mode Button -->
+        <button id="handsFreeBtn" class="btn-handsfree" title="Open Fullscreen Hands-Free Voice Assistant HUD">
+          <i class="fa-solid fa-headset"></i>
+          <span class="hide-mobile">Hands-Free</span>
+        </button>
+
+        <!-- Theme Toggle Button -->
+        <button id="themeToggleBtn" class="header-icon-btn" title="Toggle Light / Dark Mode">
+          <i class="fa-solid fa-moon"></i>
+        </button>
+
+        <!-- Cart Quick Launch Button -->
+        <button id="openCartDrawerBtn" class="header-cart-btn">
+          <div class="cart-btn-icon">
+            <i class="fa-solid fa-cart-shopping"></i>
+            <span class="cart-badge-count" id="headerCartCount">3</span>
+          </div>
+          <div class="cart-btn-info">
+            <span class="cart-btn-label">My Cart</span>
+            <span class="cart-btn-price" id="headerCartTotal">$12.87</span>
+          </div>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="site-wrapper">
+    <!-- Elegant Smart Voice Command Hub (Spacious, Clean & Professional) -->
+    <section class="voice-assistant-hub">
+      <div class="hub-header-row">
+        <div class="hub-badge-group">
+          <span class="hub-live-badge"><span class="pulse-dot"></span> MiniMax-M3 Reasoning Engine</span>
+          <span class="hub-delivery-badge">⚡ 10 Mins Superfast Delivery</span>
+        </div>
+        <div class="hub-voice-persona-badge">
+          <i class="fa-solid fa-volume-high"></i> Natural Human Voice Synthesis Active
+        </div>
+      </div>
+
+      <div class="hub-main-interface">
+        <!-- Interactive Glowing Voice Orb -->
+        <div class="hub-orb-wrapper">
+          <button id="heroMainMicBtn" class="hub-voice-orb" aria-label="Start Voice Recording" title="Click or Press Spacebar to Speak">
+            <div class="orb-glow-ring"></div>
+            <div class="orb-core-btn">
+              <i class="fa-solid fa-microphone" id="heroMicIcon"></i>
+            </div>
+          </button>
+          <span class="hub-mic-hint">Press <kbd>Space</kbd> or Click Mic</span>
+        </div>
+
+        <!-- Central Speech Dialogue & Waveform -->
+        <div class="hub-speech-panel">
+          <div class="hub-dialogue-top">
+            <div class="hub-waveform-box">
+              <canvas id="audioVisualizer" width="240" height="50"></canvas>
+            </div>
+            <div class="hub-status-tags">
+              <span id="detectedIntentBadge" class="intent-pill">READY</span>
+              <button id="replayAudioBtn" class="hub-replay-btn" style="display: none;">
+                <i class="fa-solid fa-volume-high"></i> Replay Voice
+              </button>
+            </div>
+          </div>
+
+          <div class="hub-dialogue-bubbles">
+            <div class="bubble-user">
+              <span class="bubble-tag user"><i class="fa-solid fa-user"></i> You</span>
+              <p id="liveUserTranscript">"Ready for your voice command..."</p>
+            </div>
+            <div class="bubble-ai">
+              <span class="bubble-tag ai"><i class="fa-solid fa-sparkles"></i> VoiceCart AI</span>
+              <p id="assistantResponseText">"Welcome! Speak any grocery command like 'Add 2 bottles of oat milk' or 'Find snacks under $5'."</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Spoken Suggestion Chips (Clean & Spacious) -->
+      <div class="hub-chips-row">
+        <span class="chips-title"><i class="fa-solid fa-lightbulb"></i> Try Commands:</span>
+        <div class="chips-list" id="heroChipsRail">
+          <button class="hub-cmd-chip" data-cmd="Add 2 bottles of oat milk and 1 loaf of sourdough bread">
+            <i class="fa-solid fa-plus"></i> Add 2 oat milks & sourdough
+          </button>
+          <button class="hub-cmd-chip" data-cmd="Find fresh organic fruits under $4">
+            <i class="fa-solid fa-magnifying-glass"></i> Organic fruits under $4
+          </button>
+          <button class="hub-cmd-chip" data-cmd="What groceries do I need to restock?">
+            <i class="fa-solid fa-clock-rotate-left"></i> What do I need to restock?
+          </button>
+          <button class="hub-cmd-chip" data-cmd="Suggest a healthy alternative for whole milk">
+            <i class="fa-solid fa-arrows-rotate"></i> Substitute for whole milk
+          </button>
+          <button class="hub-cmd-chip" data-cmd="Show seasonal specials on sale">
+            <i class="fa-solid fa-tag"></i> Seasonal sales & deals
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Visual Category Nav Bar (Blinkit Style Icon Rail) -->
+    <nav class="category-icon-rail" aria-label="Product Categories">
+      <div class="cat-pill-item active" data-category="All">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=120&q=80" alt="All"></div>
+        <span>All Items</span>
+      </div>
+      <div class="cat-pill-item" data-category="Produce">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&w=120&q=80" alt="Produce"></div>
+        <span>Vegetables & Fruits</span>
+      </div>
+      <div class="cat-pill-item" data-category="Dairy & Eggs">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=120&q=80" alt="Dairy"></div>
+        <span>Dairy, Bread & Eggs</span>
+      </div>
+      <div class="cat-pill-item" data-category="Bakery">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=120&q=80" alt="Bakery"></div>
+        <span>Bakery & Breads</span>
+      </div>
+      <div class="cat-pill-item" data-category="Pantry">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=120&q=80" alt="Pantry"></div>
+        <span>Atta, Rice & Oil</span>
+      </div>
+      <div class="cat-pill-item" data-category="Meat & Seafood">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=120&q=80" alt="Meat"></div>
+        <span>Meat & Seafood</span>
+      </div>
+      <div class="cat-pill-item" data-category="Beverages">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=120&q=80" alt="Drinks"></div>
+        <span>Cold Drinks & Juices</span>
+      </div>
+      <div class="cat-pill-item" data-category="Snacks">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1508061253366-f7da158b6d46?auto=format&fit=crop&w=120&q=80" alt="Snacks"></div>
+        <span>Munchies & Snacks</span>
+      </div>
+      <div class="cat-pill-item" data-category="Household">
+        <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1585421514738-01798e348b17?auto=format&fit=crop&w=120&q=80" alt="Household"></div>
+        <span>Home & Cleaning</span>
+      </div>
+    </nav>
+
+    <!-- Main Store Layout (Product Showcase + Sidebar Cart & Intelligence) -->
+    <main class="store-grid">
+      <!-- Left / Center: Product Showcase & Filter Bar -->
+      <section class="products-section">
+        <!-- Section Filter & View Header -->
+        <div class="store-section-header">
+          <div class="section-title-box">
+            <h2 class="store-section-title" id="currentCategoryHeading">Fresh Groceries & Essentials</h2>
+            <span class="product-count-pill" id="catalogProductCount">19 Products Available</span>
+          </div>
+
+          <div class="filter-controls-group">
+            <!-- Price Range Filter Slider -->
+            <div class="price-filter-slider-box">
+              <span class="filter-label">Max Price: <strong id="priceRangeValue">$15.00</strong></span>
+              <input type="range" id="priceRangeSlider" min="1" max="15" step="0.5" value="15">
+            </div>
+
+            <!-- Dietary Tag Chips -->
+            <div class="dietary-chips-row" id="dietaryFilterChips">
+              <button class="diet-chip active" data-diet="">All</button>
+              <button class="diet-chip" data-diet="Organic">🌱 Organic</button>
+              <button class="diet-chip" data-diet="Vegan">🥑 Vegan</button>
+              <button class="diet-chip" data-diet="Gluten-Free">🌾 Gluten-Free</button>
+              <button class="diet-chip" data-diet="Keto">🥩 Keto</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Products Grid Container -->
+        <div class="products-grid" id="mainProductsGrid">
+          <!-- Dynamic High-Res Product Cards Generated Here -->
+        </div>
+      </section>
+
+      <!-- Right Column: AI Smart Suggestions & Recommendations Hub -->
+      <aside class="sidebar-workspace">
+        <div class="sidebar-top-header">
+          <div class="sidebar-header-title">
+            <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--brand-green);"></i>
+            <h3>Smart Grocery AI</h3>
+          </div>
+          <span class="ai-mode-pill">Real-Time</span>
+        </div>
+
+        <!-- 3 Clean, Spacious AI Smart Hub Tabs (No text wrapping!) -->
+        <div class="workspace-tabs-header">
+          <button class="ws-tab active" data-target="restockPane">
+            <i class="fa-solid fa-clock-rotate-left"></i> Restock Smart
+          </button>
+          <button class="ws-tab" data-target="dealsPane">
+            <i class="fa-solid fa-tags"></i> Deals & Seasonal
+          </button>
+          <button class="ws-tab" data-target="subsPane">
+            <i class="fa-solid fa-arrows-rotate"></i> Swap & Diet
+          </button>
+        </div>
+
+        <div class="workspace-tab-panes">
+          <!-- Pane 1: Restock Alerts (Predictive Depletion) -->
+          <div class="ws-pane active" id="restockPane">
+            <div class="pane-callout">
+              <i class="fa-solid fa-brain"></i>
+              <span><strong>AI Restock Alerts:</strong> Proactively calculated based on your past consumption cycles.</span>
+            </div>
+            <div class="suggestions-list" id="replenishmentGrid">
+              <!-- Dynamically Populated -->
+            </div>
+          </div>
+
+          <!-- Pane 2: Seasonal Deals & Discounts -->
+          <div class="ws-pane" id="dealsPane">
+            <div class="pane-callout">
+              <i class="fa-solid fa-percent"></i>
+              <span><strong>Seasonal Specials:</strong> Fresh farm-to-table seasonal harvest and exclusive discounts.</span>
+            </div>
+            <div class="suggestions-list" id="seasonalGrid">
+              <!-- Dynamically Populated -->
+            </div>
+          </div>
+
+          <!-- Pane 3: Healthier & Budget Substitutions -->
+          <div class="ws-pane" id="subsPane">
+            <div class="substitute-search-box">
+              <label for="substituteTargetInput" class="subs-label">Find Alternatives & Dietary Substitutes:</label>
+              <div class="subs-input-row">
+                <input type="text" id="substituteTargetInput" placeholder="e.g. Whole Milk, Bread, Chicken..." value="Whole Grade A Milk">
+                <button id="findSubstituteBtn" class="btn-find-subs">Find</button>
+              </div>
+            </div>
+            <div class="suggestions-list" id="substitutesResults">
+              <!-- Dynamically Populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Cart Quick Summary Footer -->
+        <div class="sidebar-cart-cta-card">
+          <div class="cta-cart-info">
+            <div class="cta-cart-icon"><i class="fa-solid fa-basket-shopping"></i></div>
+            <div class="cta-cart-text">
+              <span class="cta-cart-count" id="sidebarCartCount">3 Items in Cart</span>
+              <span class="cta-cart-total" id="sidebarCartTotal">$12.87</span>
+            </div>
+          </div>
+          <button id="sidebarOpenCartBtn" class="btn-open-cart-full">
+            View Cart & Checkout <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Dedicated Full-Featured Cart & Checkout Drawer (Blinkit / Instamart Style) -->
+  <div class="cart-drawer-overlay" id="cartDrawerOverlay" style="display: none;">
+    <div class="cart-drawer-backdrop" id="cartDrawerBackdrop"></div>
+    <div class="cart-drawer-panel">
+      <!-- Drawer Header -->
+      <header class="drawer-header">
+        <div class="drawer-header-left">
+          <div class="drawer-header-icon"><i class="fa-solid fa-cart-shopping"></i></div>
+          <div>
+            <h2 class="drawer-title">My Shopping Cart</h2>
+            <p class="drawer-subtitle"><span id="drawerItemCount">3</span> items • <span id="drawerEtaText">⚡ Delivery in 10 mins</span></p>
+          </div>
+        </div>
+        <button id="closeCartDrawerBtn" class="btn-close-drawer" aria-label="Close Cart">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </header>
+
+      <!-- Drawer Body (Scrollable) -->
+      <div class="drawer-body">
+        <!-- Delivery Address Banner -->
+        <div class="drawer-delivery-banner">
+          <div class="del-icon"><i class="fa-solid fa-location-dot"></i></div>
+          <div class="del-text">
+            <strong>Delivering to Home</strong>
+            <span>221B Baker St, New York, NY 10001</span>
+          </div>
+        </div>
+
+        <!-- Budget Tracker Card -->
+        <div class="drawer-budget-box">
+          <div class="drawer-budget-row">
+            <span><i class="fa-solid fa-wallet"></i> Monthly Grocery Budget</span>
+            <strong id="drawerBudgetSpentDisplay" class="gradient-text">$12.87 / $50.00</strong>
+          </div>
+          <div class="drawer-budget-bar">
+            <div class="drawer-budget-fill" id="drawerBudgetFillBar" style="width: 25%;"></div>
+          </div>
+        </div>
+
+        <!-- Quick Manual Add Input -->
+        <form class="drawer-quick-add" id="drawerManualAddForm">
+          <input type="text" id="drawerManualInput" placeholder="Add custom item (e.g. 2 lemons, butter)..." required>
+          <button type="submit" class="drawer-quick-add-btn"><i class="fa-solid fa-plus"></i> Add</button>
+        </form>
+
+        <!-- Cart Items Scroll List (Spacious & Clean) -->
+        <div class="drawer-items-list" id="shoppingListContainer">
+          <!-- Dynamically Populated with high quality item cards -->
+        </div>
+
+        <!-- Bill Details Card -->
+        <div class="drawer-bill-card">
+          <h3 class="bill-title">Bill Summary</h3>
+          <div class="bill-row">
+            <span>Item Total</span>
+            <span id="billItemTotal">$12.87</span>
+          </div>
+          <div class="bill-row">
+            <span>Delivery Partner Fee (10 Mins)</span>
+            <span class="fee-free">FREE</span>
+          </div>
+          <div class="bill-row">
+            <span>Handling & Platform Fee</span>
+            <span>$0.50</span>
+          </div>
+          <div class="bill-row bill-grand-total">
+            <span>To Pay (Grand Total)</span>
+            <span id="billGrandTotal" class="grand-total-val">$13.37</span>
+          </div>
+        </div>
+
+        <!-- Share & Export Actions -->
+        <div class="drawer-actions-row">
+          <button id="exportWhatsAppBtn" class="btn-share-wa">
+            <i class="fa-brands fa-whatsapp"></i> Share WhatsApp
+          </button>
+          <button id="exportCsvBtn" class="btn-share-csv">
+            <i class="fa-solid fa-file-csv"></i> Export CSV
+          </button>
+          <button id="exportTextBtn" class="btn-share-copy">
+            <i class="fa-regular fa-copy"></i> Copy Text
+          </button>
+          <button id="clearListBtn" class="btn-share-clear" title="Clear Cart">
+            <i class="fa-regular fa-trash-can"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Drawer Sticky Footer (Place Order / Checkout) -->
+      <footer class="drawer-footer">
+        <div class="drawer-footer-price">
+          <span class="footer-label">TOTAL AMOUNT</span>
+          <span class="footer-price" id="drawerFooterTotal">$13.37</span>
+        </div>
+        <button id="placeOrderBtn" class="btn-place-order">
+          <span>Proceed to Checkout</span>
+          <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </footer>
+    </div>
+  </div>
+
+
+  <!-- Fullscreen Hands-Free Voice Assistant HUD (Cooking & Driving Mode) -->
+  <div class="handsfree-overlay" id="handsFreeOverlay" style="display: none;">
+    <div class="handsfree-backdrop"></div>
+    <div class="handsfree-hud">
+      <header class="hud-header">
+        <div class="hud-brand">
+          <i class="fa-solid fa-headset"></i>
+          <div>
+            <h2>Hands-Free Kitchen Voice Assistant</h2>
+            <p>Continuous listening mode enabled • MiniMax-M3 + Neural TTS</p>
+          </div>
+        </div>
+        <button id="closeHandsFreeBtn" class="btn-close-hud" aria-label="Exit Hands-Free Mode">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </header>
+
+      <div class="hud-body">
+        <div class="hud-orb-box">
+          <button id="hudMicBtn" class="hud-mic-orb listening" aria-label="Listening indicator">
+            <div class="hud-ring r1"></div>
+            <div class="hud-ring r2"></div>
+            <div class="hud-ring r3"></div>
+            <div class="hud-orb-icon">
+              <i class="fa-solid fa-microphone"></i>
+            </div>
+          </button>
+          <p class="hud-listening-text" id="hudStatus">Listening continuously... Speak your grocery commands</p>
+        </div>
+
+        <div class="hud-subtitles-box">
+          <div class="sub-row user-sub">
+            <span class="sub-role">You:</span>
+            <p id="hudUserText">"Listening for your command..."</p>
+          </div>
+          <div class="sub-row ai-sub">
+            <span class="sub-role ai">VoiceCart:</span>
+            <p id="hudAiText">"I am listening. Try saying 'Add 2 bottles of oat milk' or 'Find snacks under $5'."</p>
+          </div>
+        </div>
+
+        <div class="hud-cart-preview-box">
+          <span class="hud-preview-title">Cart Preview (<span id="hudItemCount">3</span> items • <span id="hudTotalCost">$12.87</span>)</span>
+          <div class="hud-preview-pills" id="hudCartList">
+            <!-- Dynamic Items -->
+          </div>
+        </div>
+      </div>
+
+      <footer class="hud-footer">
+        <span>Press <kbd>Esc</kbd> or click ✕ to exit Hands-Free Mode • Hands-Free continuous voice enabled</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Toast Notification System -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <!-- Hidden Audio Player for MiniMax Neural TTS Voice Responses -->
+  <audio id="ttsAudioPlayer" preload="auto"></audio>
+
+  <!-- Application Module Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Environment and Secret configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+!.env.example
+
+# Logs and runtime data
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS and Editor metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# Temporary files and scratch scripts
+test_*.py
+scratch/
+tmp/
+temp/
+.temp/
+
+# Build artifacts
+dist/
+build/
+coverage/
+.nyc_output/
