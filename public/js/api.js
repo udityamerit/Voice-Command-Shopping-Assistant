@@ -89,6 +89,12 @@ export const ApiClient = {
     return res.json();
   },
 
+  async getProductReviews(productId) {
+    const res = await fetch(`${BASE_URL}/api/products/${encodeURIComponent(productId)}/reviews`);
+    if (!res.ok) throw new Error("Failed to fetch product reviews");
+    return res.json();
+  },
+
   async exportList(format = "text") {
     if (format === "csv") {
       window.location.href = `${BASE_URL}/api/export?format=csv`;

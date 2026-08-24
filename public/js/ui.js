@@ -89,7 +89,12 @@ export const UI = {
           </div>
 
           <div class="card-info">
-            <span class="card-brand">${escapeHtml(p.brand || 'Fresh')}</span>
+            <div class="card-top-row">
+              <span class="card-brand">${escapeHtml(p.brand || 'Fresh')}</span>
+              <button class="card-rating-chip" data-product-id="${p.id}" title="Click to view verified customer reviews & web consensus">
+                <i class="fa-solid fa-star"></i> ${(p.rating || 4.8).toFixed(1)} <span class="rating-count">(${p.reviewsCount || 250})</span>
+              </button>
+            </div>
             <h3 class="card-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</h3>
             <span class="card-unit">${escapeHtml(p.unit || '1 unit')}</span>
           </div>
@@ -106,6 +111,14 @@ export const UI = {
     }).join("");
 
     // Attach listeners
+    grid.querySelectorAll(".card-rating-chip").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const prodId = e.currentTarget.getAttribute("data-product-id");
+        callbacks.onShowReviews?.(prodId);
+      });
+    });
+
     grid.querySelectorAll(".btn-blinkit-add").forEach(btn => {
       btn.addEventListener("click", (e) => {
         const prodId = e.currentTarget.getAttribute("data-product-id");

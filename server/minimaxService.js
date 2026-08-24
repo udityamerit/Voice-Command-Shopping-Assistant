@@ -4,6 +4,7 @@ import { PRODUCT_CATALOG, CATEGORIES } from "./catalogData.js";
 import { searchCatalog, getProductSubstitutes, getPredictiveReplenishment, getSeasonalAndSaleRecommendations, findCatalogProduct } from "./recommendationEngine.js";
 import { autoCorrectTranscript } from "./autoCorrectService.js";
 import { ConversationMemory } from "./conversationMemory.js";
+import { getProductReviews } from "./productReviewService.js";
 
 dotenv.config();
 
@@ -121,6 +122,11 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   const raw = userTranscript.trim();
   // Normalize for matching: lowercase, strip punctuation
   const lower = raw.toLowerCase().replace(/[?!.,;:]/g, "").trim();
+
+  // Common Context & Action Guards
+  const memoryContext = sessionId ? ConversationMemory.getContext(sessionId) : null;
+  const startsWithMutatingAction = /^(add|buy|order|put|get|i\s+need|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
+  const startsWithAction = startsWithMutatingAction;
 
   // ── 1. GREETING / CHAT ──────────────────────────────────────────────────
   if (/^(hello|hi+|hey+|good\s+(morning|evening|afternoon|night)|who\s+are\s+you|help me|what\s+can\s+you\s+do)$/.test(lower)) {
@@ -274,6 +280,37 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
     };
   }
 
+  // ── 6.5 PRODUCT_REVIEWS Intent — "reviews for whole milk", "what do people say about pasture raised eggs", "customer rating for olive oil", "is sourdough good according to reviews" ────
+  const isReviewQuery = (
+    /\b(reviews?|ratings?|feedback|what\s+do\s+people\s+say|what\s+are\s+(?:people|customers|users)\s+saying|is\s+it\s+good|how\s+good\s+is|consumer\s+opinion|web\s+consensus|tasting\s+notes)\b/i.test(lower) &&
+    !startsWithMutatingAction
+  );
+
+  if (isReviewQuery) {
+    let rawTarget = lower
+      .replace(/\b(what\s+are\s+the\s+reviews?|what\s+are\s+the\s+ratings?|what\s+do\s+people\s+say\s+about|what\s+are\s+customers\s+saying\s+about|show\s+(?:me\s+)?(?:the\s+)?reviews?\s+(?:of|for|on)|tell\s+me\s+(?:about\s+)?(?:the\s+)?reviews?\s+(?:of|for|on)|customer\s+reviews?\s+(?:for|of|on)|customer\s+ratings?\s+(?:for|of|on)|ratings?\s+(?:for|of|on)|reviews?\s+(?:for|of|on)|how\s+good\s+is|is\s+it\s+good|according\s+to\s+reviews?|reviews?|ratings?|for|of|on|about|the|this|that|these|those|them|it|please)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // If query was "what are the reviews of it", fallback to active entity
+    const targetProduct = (rawTarget && rawTarget.length >= 2) ? rawTarget : (memoryContext?.lastMentionedItem?.name || null);
+
+    if (targetProduct) {
+      const reviewData = getProductReviews(targetProduct);
+      if (reviewData) {
+        return {
+          intent: "PRODUCT_REVIEWS",
+          detectedLanguage: "en",
+          spokenFeedback: `${reviewData.name} has an outstanding ${reviewData.rating} out of 5 star rating from ${reviewData.reviewsCount} customer reviews. Online reviews highlight: "${reviewData.webConsensus.headline}". I've displayed the full review card on your screen.`,
+          product: reviewData,
+          reviewData,
+          uiAction: { type: "SHOW_PRODUCT_REVIEWS", payload: reviewData },
+          items: []
+        };
+      }
+    }
+  }
+
   // ── 7. CATEGORY NAVIGATION ───────────────────────────────────────────────
   // Supports all categories dynamically without hardcoding rigid phrases
   const categoryMap = [
@@ -391,10 +428,6 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
       items: []
     };
   }
-
-  // ── Common Guards & Classifiers ──────────────────────────────────────────
-  const startsWithMutatingAction = /^(add|buy|order|put|get|i\s+need|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
-  const startsWithAction = startsWithMutatingAction;
 
   const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
   const COST_WORDS = /\b(total\s+cost|total\s+price|total\s+bill|grand\s+total|price\s+total|bill\s+total|what\s+will\s+it\s+cost|what\s+does\s+it\s+cost|how\s+much\s+(?:is\s+my\s+cart|in\s+(?:my\s+|the\s+)?cart|is\s+the\s+total|is\s+the\s+order|do\s+i\s+owe))\b/i;
@@ -620,7 +653,6 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
 
   // ── 18. CONVERSATIONAL CONTEXT FOLLOW-UPS (Pronouns & Anaphora) ──────────
   // Uses conversation memory to resolve: "actually make it 3", "make that 4", "remove it", "add those", "add it to cart", "how much is it"
-  const memoryContext = sessionId ? ConversationMemory.getContext(sessionId) : null;
 
   // Contextual single-item add: "add it", "add it to cart", "put it in my cart", "buy it", "add that", "add this"
   if (
@@ -1048,6 +1080,7 @@ Valid intents:
 - "CLEAR": Empty shopping cart.
 - "SHOW_CART": Inspect or open shopping cart.
 - "CHECKOUT": Place the delivery order.
+- "PRODUCT_REVIEWS": Retrieve verified customer reviews and web/internet consensus for a product.
 - "SEARCH": Search for products in the store by query, max price, or category.
 - "NAVIGATE_CATEGORY": Change product category view (Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, Household, All).
 - "APPLY_FILTER": Apply dietary filter (Organic, Vegan, Gluten-Free, Keto, All).
@@ -1065,7 +1098,7 @@ Valid intents:
 Respond ONLY with strict JSON (no markdown fences, no explanatory text outside JSON).
 Format:
 {
-  "intent": "ADD" | "NAVIGATE_CATEGORY" | "APPLY_FILTER" | "SET_PRICE_FILTER" | "RESET_FILTERS" | "TOGGLE_THEME" | "SHOW_CART" | "SEARCH" | "CHAT",
+  "intent": "ADD" | "NAVIGATE_CATEGORY" | "APPLY_FILTER" | "SET_PRICE_FILTER" | "RESET_FILTERS" | "TOGGLE_THEME" | "SHOW_CART" | "PRODUCT_REVIEWS" | "SEARCH" | "CHAT",
   "detectedLanguage": "en",
   "spokenFeedback": "Natural, clear, concise voice response spoken back to user.",
   "items": [{"name": "item name", "quantity": 1, "category": "Produce"}],

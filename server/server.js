@@ -18,6 +18,7 @@ import {
   generateMiniMaxSpeech
 } from "./minimaxService.js";
 import { ConversationMemory } from "./conversationMemory.js";
+import { getProductReviews } from "./productReviewService.js";
 
 dotenv.config();
 
@@ -271,6 +272,16 @@ app.delete("/api/shopping-list", (req, res) => {
   res.json({ message: "Shopping list cleared", data: [] });
 });
 
+// Product Reviews & Curated Web Consensus Endpoint
+app.get("/api/products/:id/reviews", (req, res) => {
+  const { id } = req.params;
+  const reviewData = getProductReviews(id);
+  if (!reviewData) {
+    return res.status(404).json({ error: `No review data found for product '${id}'` });
+  }
+  res.json({ success: true, reviews: reviewData });
+});
+
 function findCartItem(targetStr, cartList) {
   if (!targetStr || typeof targetStr !== "string") return null;
 
@@ -486,6 +497,14 @@ app.post("/api/voice/process", async (req, res) => {
         actionsTaken.push(`Executed UI action: ${nlpResult.uiAction.type}`);
         uiAction = nlpResult.uiAction;
       }
+    } else if (intent === "PRODUCT_REVIEWS") {
+      const p = nlpResult.product || nlpResult.reviewData || findCatalogProduct(transcript);
+      const rev = getProductReviews(p?.id || p?.name || transcript);
+      if (rev) {
+        actionsTaken.push(`Retrieved customer reviews & web consensus for ${rev.name}`);
+        if (!uiAction) uiAction = { type: "SHOW_PRODUCT_REVIEWS", payload: rev };
+      }
+      finalSpokenFeedback = nlpResult.spokenFeedback;
     } else if (intent === "PRODUCT_INFO") {
       const p = nlpResult.product || findCatalogProduct(transcript);
       if (p) {
@@ -586,6 +605,8 @@ app.post("/api/voice/process", async (req, res) => {
     console.log(`[Voice] Response: "${speechText}" | Actions: ${actionsTaken.length}`);
     const ttsResult = await generateMiniMaxSpeech(speechText, voiceId);
 
+    const resolvedReviewData = nlpResult.reviewData || (intent === "PRODUCT_REVIEWS" ? uiAction?.payload : null);
+
     res.json({
       success: true,
       transcript,
@@ -600,6 +621,7 @@ app.post("/api/voice/process", async (req, res) => {
       searchResults,
       substituteData,
       recommendationData,
+      reviewData: resolvedReviewData,
       shoppingList
     });
   } catch (err) {

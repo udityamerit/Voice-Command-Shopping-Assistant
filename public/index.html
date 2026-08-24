@@ -523,6 +523,110 @@
   </div>
 
 
+  <!-- ================================================================
+       INTERACTIVE PRODUCT REVIEWS & WEB CONSENSUS MODAL
+       ================================================================ -->
+  <div class="review-modal-overlay" id="productReviewModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
+    <div class="review-modal-backdrop" id="reviewModalBackdrop"></div>
+    <div class="review-modal-container">
+      <header class="review-modal-header">
+        <div class="review-modal-title-group">
+          <span class="review-modal-badge" id="reviewModalCategory"><i class="fa-solid fa-layer-group"></i> Dairy & Eggs</span>
+          <h2 id="reviewModalTitle" class="review-modal-title">Pasture-Raised Brown Eggs</h2>
+          <p id="reviewModalBrand" class="review-modal-brand">Vital Farms • 1 Dozen (12 ct)</p>
+        </div>
+        <button id="closeReviewModalBtn" class="btn-close-review-modal" aria-label="Close reviews modal">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </header>
+
+      <div class="review-modal-body">
+        <!-- Top Score & Rating Bars Row -->
+        <div class="review-score-section">
+          <div class="review-score-big">
+            <span class="score-number" id="reviewScoreNumber">4.9</span>
+            <div class="score-stars-box">
+              <div class="stars-gold" id="reviewStarsVisual">
+                <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>
+              </div>
+              <span class="score-count" id="reviewScoreCount">Based on 1,120 verified reviews</span>
+            </div>
+          </div>
+
+          <div class="review-bars-breakdown">
+            <div class="review-bar-row">
+              <span class="bar-label">5 ★</span>
+              <div class="bar-track"><div class="bar-fill" id="bar5Star" style="width: 92%;"></div></div>
+              <span class="bar-pct" id="pct5Star">92%</span>
+            </div>
+            <div class="review-bar-row">
+              <span class="bar-label">4 ★</span>
+              <div class="bar-track"><div class="bar-fill" id="bar4Star" style="width: 6%;"></div></div>
+              <span class="bar-pct" id="pct4Star">6%</span>
+            </div>
+            <div class="review-bar-row">
+              <span class="bar-label">3 ★</span>
+              <div class="bar-track"><div class="bar-fill" id="bar3Star" style="width: 1%;"></div></div>
+              <span class="bar-pct" id="pct3Star">1%</span>
+            </div>
+            <div class="review-bar-row">
+              <span class="bar-label">2 ★</span>
+              <div class="bar-track"><div class="bar-fill" id="bar2Star" style="width: 1%;"></div></div>
+              <span class="bar-pct" id="pct2Star">1%</span>
+            </div>
+            <div class="review-bar-row">
+              <span class="bar-label">1 ★</span>
+              <div class="bar-track"><div class="bar-fill" id="bar1Star" style="width: 0%;"></div></div>
+              <span class="bar-pct" id="pct1Star">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sentiment Tags Row -->
+        <div class="review-sentiment-tags-box">
+          <span class="sentiment-label"><i class="fa-solid fa-tags"></i> Customer Highlights:</span>
+          <div class="sentiment-pills-list" id="reviewSentimentPills">
+            <!-- Dynamic tags -->
+          </div>
+        </div>
+
+        <!-- Web & Internet Consensus Card -->
+        <div class="review-web-consensus-card">
+          <div class="consensus-header">
+            <div class="consensus-icon-pill">
+              <i class="fa-solid fa-globe"></i>
+              <span>Web & Internet Consensus</span>
+            </div>
+            <span class="consensus-verified-tag"><i class="fa-solid fa-circle-check"></i> Culinary & Food Critic Consensus</span>
+          </div>
+          <h4 class="consensus-headline" id="consensusHeadline">"Ranked #1 pasture-raised egg brand nationally in culinary reviews."</h4>
+          <p class="consensus-summary" id="consensusSummary">Vital Farms is celebrated across food magazines and organic consumer guides for guaranteeing 108 sq ft of open outdoor pasture per hen.</p>
+          <div class="consensus-strengths-list" id="consensusStrengths">
+            <!-- Key Strengths -->
+          </div>
+        </div>
+
+        <!-- Verified Store Customer Reviews -->
+        <div class="review-verified-section">
+          <h3 class="section-subtitle"><i class="fa-solid fa-user-check"></i> Verified Store Customer Reviews</h3>
+          <div class="verified-reviews-list" id="verifiedCustomerReviewsList">
+            <!-- Dynamic Customer Reviews -->
+          </div>
+        </div>
+      </div>
+
+      <footer class="review-modal-footer">
+        <div class="review-modal-price-box">
+          <span class="modal-price-label">STORE PRICE</span>
+          <span class="modal-price-val" id="reviewModalPrice">$4.69</span>
+        </div>
+        <button id="modalAddToCartBtn" class="btn-modal-add-cart">
+          <i class="fa-solid fa-cart-plus"></i> Add to Cart (Voice or Click)
+        </button>
+      </footer>
+    </div>
+  </div>
+
   <!-- Fullscreen Hands-Free Voice Assistant HUD (Cooking & Driving Mode) -->
   <div class="handsfree-overlay" id="handsFreeOverlay" style="display: none;">
     <div class="handsfree-backdrop"></div>
