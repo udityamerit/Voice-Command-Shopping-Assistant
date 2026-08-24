@@ -343,7 +343,7 @@ export const UI = {
   },
 
   /**
-   * Updates Hands-Free HUD Preview
+   * Renders Hands-Free HUD Preview
    */
   renderHandsFreeCart(items = [], totalCost = "0.00") {
     const hudList = document.getElementById("hudCartList");
@@ -358,8 +358,125 @@ export const UI = {
         `<span class="hud-pill">${i.emoji || "🛒"} ${i.quantity}x ${escapeHtml(i.name)}</span>`
       ).join("");
     }
+  },
+
+  /**
+   * Renders the "Recommended For You" purchase-history carousel.
+   * Each card shows: product image, urgency badge (Reorder Now / Running Low / Stock Up),
+   * AI confidence meter bar, reason text, price, and Add to Cart button.
+   */
+  renderHistoryRecommendations(items = [], onAdd) {
+    const track = document.getElementById("rfyCarouselTrack");
+    const countPill = document.getElementById("rfyCountPill");
+    if (!track) return;
+
+    // Update count pill
+    if (countPill) {
+      countPill.textContent = items.length > 0
+        ? `${items.length} item${items.length === 1 ? "" : "s"} to restock`
+        : "All stocked up!";
+    }
+
+    if (items.length === 0) {
+      track.innerHTML = `
+        <div class="rfy-empty-state">
+          <i class="fa-solid fa-circle-check" style="color: var(--brand-green);"></i>
+          <strong>Pantry fully stocked!</strong>
+          <span>No urgent restocks detected based on your purchase cycles.</span>
+        </div>
+      `;
+      return;
+    }
+
+    track.innerHTML = items.map(item => {
+      const p = item.product;
+      const confidencePct = Math.round((item.confidence || 0.7) * 100);
+      const isInCart = item.alreadyInCart;
+
+      const urgencyBadge = `
+        <span class="rfy-urgency-badge" style="background: ${item.urgencyColor || 'var(--brand-green)'}">
+          ${item.urgencyLabel || "Stock Up"}
+        </span>
+      `;
+
+      const inCartBadge = isInCart
+        ? `<span class="rfy-incart-badge" title="Already in cart"><i class="fa-solid fa-check"></i></span>`
+        : "";
+
+      const addBtnHtml = isInCart
+        ? `<button class="rfy-add-btn added" disabled data-id="${p.id}"><i class="fa-solid fa-check"></i> In Cart</button>`
+        : `<button class="rfy-add-btn rfy-add-action" data-id="${p.id}" title="Add to cart">
+            <i class="fa-solid fa-plus"></i> Add
+           </button>`;
+
+      return `
+        <div class="rfy-card${isInCart ? " in-cart" : ""}" data-product-id="${p.id}">
+          <div class="rfy-card-img-box">
+            ${inCartBadge}
+            ${urgencyBadge}
+            <img
+              src="${p.image}"
+              alt="${escapeHtml(p.name)}"
+              loading="lazy"
+              onerror="this.src='https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80'"
+            >
+          </div>
+
+          <div class="rfy-card-body">
+            <span class="rfy-card-emoji">${p.emoji || "📦"}</span>
+            <span class="rfy-card-brand">${escapeHtml(p.brand || "Fresh")}</span>
+            <h3 class="rfy-card-name">${escapeHtml(p.name)}</h3>
+            <p class="rfy-card-reason">${escapeHtml(item.reason || "Based on your purchase history")}</p>
+
+            <div class="rfy-confidence-row">
+              <span class="rfy-confidence-label">AI confidence</span>
+              <div class="rfy-confidence-bar">
+                <div class="rfy-confidence-fill" style="width: ${confidencePct}%"></div>
+              </div>
+              <span class="rfy-confidence-pct">${confidencePct}%</span>
+            </div>
+          </div>
+
+          <div class="rfy-card-footer">
+            <div>
+              <div class="rfy-card-price">$${p.price.toFixed(2)}</div>
+              <div class="rfy-card-unit">${escapeHtml(p.unit || "1 unit")}</div>
+            </div>
+            ${addBtnHtml}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // Attach Add to Cart listeners
+    track.querySelectorAll(".rfy-add-action").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.currentTarget.getAttribute("data-id");
+        const originalHtml = btn.innerHTML;
+
+        // Optimistic UI feedback
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        btn.disabled = true;
+
+        try {
+          await onAdd?.(id);
+
+          // Success animation: flash green check
+          btn.innerHTML = '<i class="fa-solid fa-check"></i> Added!';
+          btn.classList.add("added");
+
+          // Mark card as in-cart
+          const card = btn.closest(".rfy-card");
+          if (card) card.classList.add("in-cart");
+        } catch {
+          btn.innerHTML = originalHtml;
+          btn.disabled = false;
+        }
+      });
+    });
   }
 };
+
 
 function escapeHtml(str) {
   if (!str) return "";

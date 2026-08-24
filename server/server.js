@@ -286,6 +286,62 @@ function findCartItem(targetStr, cartList) {
 }
 
 // -------------------------------------------------------------
+// Helper: Execute a single NLU intent result against the shopping list
+// Returns { taken: string[], feedback: string }
+// FIX: Uses 'catalogResult' (not 'res') to avoid shadowing the Express response object.
+// -------------------------------------------------------------
+async function executeSingleIntent(nlpResult, shoppingList, originalTranscript) {
+  const intent = nlpResult?.intent;
+  const taken = [];
+  let feedback = "";
+
+  if (intent === "ADD" || intent === "RECIPE_EXPAND") {
+    if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
+      const addedItems = [];
+      const unavailableItems = [];
+
+      for (const itemData of nlpResult.items) {
+        const catalogResult = resolveCatalogItem(itemData); // FIX: was 'res' (shadowed Express res)
+        if (catalogResult.matched && catalogResult.item) {
+          const itemObj = catalogResult.item;
+          const existing = shoppingList.find(i =>
+            i.productId === itemObj.productId ||
+            i.name.toLowerCase() === itemObj.name.toLowerCase()
+          );
+          if (existing) {
+            existing.quantity += itemObj.quantity;
+            taken.push(`Updated ${existing.name} quantity to ${existing.quantity}`);
+            addedItems.push({ name: existing.name, quantity: itemObj.quantity });
+          } else {
+            shoppingList.unshift(itemObj);
+            taken.push(`Added ${itemObj.quantity}x ${itemObj.name} (${itemObj.category})`);
+            addedItems.push({ name: itemObj.name, quantity: itemObj.quantity });
+          }
+        } else {
+          unavailableItems.push(itemData.name || catalogResult.requestedName || "item");
+          taken.push(`Item '${itemData.name || "item"}' is not in store catalog`);
+        }
+      }
+
+      // Build contextual spoken feedback
+      if (unavailableItems.length > 0) {
+        if (addedItems.length > 0) {
+          const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + "x " : ""}${i.name}`).join(", ");
+          feedback = `Added ${addedSummary} to your cart. However, '${unavailableItems.join("', '")}' is currently not available in our store.`;
+        } else {
+          feedback = `Sorry, '${unavailableItems.join("', '")}' is currently not available in our store. We deliver fresh produce, dairy, bakery, meat, pantry, beverages, snacks, and household essentials in 10 minutes.`;
+        }
+      } else if (addedItems.length > 0) {
+        const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + "x " : ""}${i.name}`).join(", ");
+        feedback = `Added ${addedSummary} to your cart.`;
+      }
+    }
+  }
+
+  return { taken, feedback };
+}
+
+// -------------------------------------------------------------
 // Voice Command AI Endpoint (MiniMax-M3 LLM + Neural TTS)
 // -------------------------------------------------------------
 app.post("/api/voice/process", async (req, res) => {
@@ -296,8 +352,9 @@ app.post("/api/voice/process", async (req, res) => {
   }
 
   try {
-    // 1. Parse NLP Intent using MiniMax-M3 LLM
+    // 1. Parse NLP Intent using MiniMax-M3 LLM (with normalization + chunking)
     const nlpResult = await parseVoiceCommandWithMiniMax(transcript, shoppingList);
+    console.log(`[Voice] Transcript: "${transcript}" → Intent: ${nlpResult.intent}`);
     const intent = nlpResult.intent || "CHAT";
     let actionsTaken = [];
     let searchResults = null;
@@ -307,44 +364,24 @@ app.post("/api/voice/process", async (req, res) => {
     // 2. Execute List Mutations based on Intent
     let finalSpokenFeedback = nlpResult.spokenFeedback;
 
-    if (intent === "ADD" || intent === "RECIPE_EXPAND") {
-      if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
-        const addedItems = [];
-        const unavailableItems = [];
+    // ── Handle multi-intent compound commands ────────────────────────────────
+    // If the NLU chunked a compound query, process each sub-intent sequentially
+    if (nlpResult.isMultiIntent && Array.isArray(nlpResult.multiIntentResults)) {
+      const multiActionsTaken = [];
+      const multiFeedbacks = [];
 
-        for (const itemData of nlpResult.items) {
-          const res = resolveCatalogItem(itemData);
-          if (res.matched && res.item) {
-            const itemObj = res.item;
-            const existing = shoppingList.find(i => i.productId === itemObj.productId || i.name.toLowerCase() === itemObj.name.toLowerCase());
-            if (existing) {
-              existing.quantity += itemObj.quantity;
-              actionsTaken.push(`Updated ${existing.name} quantity to ${existing.quantity}`);
-              addedItems.push({ name: existing.name, quantity: itemObj.quantity });
-            } else {
-              shoppingList.unshift(itemObj);
-              actionsTaken.push(`Added ${itemObj.quantity}x ${itemObj.name} (${itemObj.category})`);
-              addedItems.push({ name: itemObj.name, quantity: itemObj.quantity });
-            }
-          } else {
-            unavailableItems.push(itemData.name || res.requestedName || "item");
-            actionsTaken.push(`Item '${itemData.name || "item"}' is currently not in store catalog`);
-          }
-        }
-
-        // Contextual speech feedback based on catalog availability
-        if (unavailableItems.length > 0) {
-          if (addedItems.length > 0) {
-            const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ");
-            finalSpokenFeedback = `Added ${addedSummary} to your cart. However, '${unavailableItems.join("', '")}' is currently not available in our store.`;
-          } else {
-            finalSpokenFeedback = `Sorry, '${unavailableItems.join("', '")}' is currently not available in our store. We deliver fresh produce, dairy, bakery, meat, pantry, beverages, snacks, and household essentials in 10 minutes.`;
-          }
-        } else if (addedItems.length > 0) {
-          const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ");
-          finalSpokenFeedback = `Added ${addedSummary} to your cart.`;
-        }
+      for (const subResult of nlpResult.multiIntentResults) {
+        const { taken, feedback } = await executeSingleIntent(subResult, shoppingList, transcript);
+        multiActionsTaken.push(...taken);
+        if (feedback) multiFeedbacks.push(feedback);
       }
+
+      actionsTaken = multiActionsTaken;
+      finalSpokenFeedback = multiFeedbacks.join(" Also, ") || nlpResult.spokenFeedback;
+    } else if (intent === "ADD" || intent === "RECIPE_EXPAND") {
+      const { taken, feedback } = await executeSingleIntent(nlpResult, shoppingList, transcript);
+      actionsTaken = taken;
+      finalSpokenFeedback = feedback || finalSpokenFeedback;
     } else if (intent === "REMOVE") {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
         const removed = [];
@@ -453,6 +490,7 @@ app.post("/api/voice/process", async (req, res) => {
 
     // 3. Synthesize Spoken Audio using MiniMax Speech-2.8-HD TTS
     const speechText = finalSpokenFeedback || nlpResult.spokenFeedback || "Your cart has been updated.";
+    console.log(`[Voice] Response: "${speechText}" | Actions: ${actionsTaken.length}`);
     const ttsResult = await generateMiniMaxSpeech(speechText, voiceId);
 
     res.json({
@@ -505,6 +543,41 @@ app.get("/api/recommendations/substitutes", (req, res) => {
 
   const data = getProductSubstitutes(product);
   res.json({ data });
+});
+
+// Purchase History-Based Recommendations — powers the "Recommended For You" carousel section
+app.get("/api/recommendations/history", (req, res) => {
+  const limit = Math.min(12, parseInt(req.query.limit, 10) || 8);
+
+  // Use existing getPredictiveReplenishment (already imported at top)
+  const cartNames = shoppingList.map(i => i.name);
+  const replenishment = getPredictiveReplenishment(cartNames);
+
+  const enriched = replenishment.map(item => {
+    const p = item.product;
+    const alreadyInCart = shoppingList.some(i =>
+      (i.productId && i.productId === p.id) ||
+      i.name.toLowerCase() === p.name.toLowerCase()
+    );
+
+    return {
+      product: {
+        ...p,
+        image: p.image || "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80"
+      },
+      reason: item.reason,
+      urgency: item.urgency,
+      confidence: item.confidence,
+      urgencyLabel: item.urgency === "high" ? "Reorder Now" : item.urgency === "medium" ? "Running Low" : "Stock Up",
+      urgencyColor: item.urgency === "high" ? "#ef4444" : item.urgency === "medium" ? "#f59e0b" : "#10b981",
+      alreadyInCart
+    };
+  });
+
+  res.json({
+    data: enriched.slice(0, limit),
+    total: replenishment.length
+  });
 });
 
 // Export shopping list (Markdown, CSV, Text)

@@ -213,7 +213,60 @@
       </div>
     </section>
 
+    <!-- ================================================================
+         RECOMMENDED FOR YOU — Purchase History AI Section
+         ================================================================ -->
+    <section class="rfy-section" id="rfySection" aria-label="Recommended For You">
+      <div class="rfy-header">
+        <div class="rfy-title-group">
+          <div class="rfy-icon-badge">
+            <i class="fa-solid fa-brain"></i>
+          </div>
+          <div>
+            <h2 class="rfy-title">Recommended For You</h2>
+            <p class="rfy-subtitle">
+              <span class="rfy-live-dot"></span>
+              Based on your purchase history & restock cycles
+            </p>
+          </div>
+        </div>
+        <div class="rfy-header-right">
+          <span class="rfy-count-pill" id="rfyCountPill">Loading...</span>
+          <button class="rfy-refresh-btn" id="rfyRefreshBtn" title="Refresh recommendations">
+            <i class="fa-solid fa-rotate-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Scrollable Carousel Track -->
+      <div class="rfy-carousel-wrapper">
+        <button class="rfy-scroll-btn rfy-scroll-left" id="rfyScrollLeft" aria-label="Scroll left">
+          <i class="fa-solid fa-chevron-left"></i>
+        </button>
+
+        <div class="rfy-carousel-track" id="rfyCarouselTrack">
+          <!-- Skeleton loaders shown while data loads -->
+          <div class="rfy-skeleton-card"></div>
+          <div class="rfy-skeleton-card"></div>
+          <div class="rfy-skeleton-card"></div>
+          <div class="rfy-skeleton-card"></div>
+          <div class="rfy-skeleton-card"></div>
+        </div>
+
+        <button class="rfy-scroll-btn rfy-scroll-right" id="rfyScrollRight" aria-label="Scroll right">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+
+      <!-- Footer bar: AI confidence indicator -->
+      <div class="rfy-footer-bar">
+        <i class="fa-solid fa-circle-info"></i>
+        <span>Predictions powered by your purchase frequency patterns • Refreshes automatically when cart changes</span>
+      </div>
+    </section>
+
     <!-- Visual Category Nav Bar (Blinkit Style Icon Rail) -->
+
     <nav class="category-icon-rail" aria-label="Product Categories">
       <div class="cat-pill-item active" data-category="All">
         <div class="cat-img-box"><img src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=120&q=80" alt="All"></div>

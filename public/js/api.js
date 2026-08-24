@@ -77,6 +77,12 @@ export const ApiClient = {
     return res.json();
   },
 
+  async getHistoryRecommendations(limit = 8) {
+    const res = await fetch(`${BASE_URL}/api/recommendations/history?limit=${limit}`);
+    if (!res.ok) throw new Error("Failed to fetch history recommendations");
+    return res.json();
+  },
+
   async getSubstitutes(productName) {
     const res = await fetch(`${BASE_URL}/api/recommendations/substitutes?product=${encodeURIComponent(productName)}`);
     if (!res.ok) throw new Error("Failed to fetch substitutes");

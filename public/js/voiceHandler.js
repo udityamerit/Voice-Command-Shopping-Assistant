@@ -1,5 +1,58 @@
 // public/js/voiceHandler.js - Robust Web Speech API Handler with Instant Feedback & Fallbacks
 
+/**
+ * Normalizes a raw STT transcript before NLU processing.
+ * Handles:
+ *  - Filler word removal (um, uh, like, you know, kind of, basically, actually)
+ *  - Number word → digit conversion (one→1, two→2 … ten→10)
+ *  - Common STT mishears in shopping context (e.g., "too"→"2" before a noun)
+ *  - Leading noise phrases removal
+ *  - Trailing punctuation cleanup
+ */
+function normalizeTranscript(raw) {
+  if (!raw || typeof raw !== "string") return raw;
+
+  let t = raw.trim();
+
+  // 1. Remove filler / hesitation words (whole-word only to avoid corruption)
+  t = t.replace(/\b(um+|uh+|hmm+|err+|like,?|you know,?|kind of,?|sort of,?|basically,?|actually,?|literally,?|right,?|okay so,?|so like,?|i mean,?)\b/gi, " ");
+
+  // 2. Number word → digit (handles both standalone and within phrases)
+  const NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "a dozen": "12",
+    "dozen": "12", "half a dozen": "6", "a few": "3", "a couple": "2",
+    "couple of": "2", "couple": "2"
+  };
+  for (const [word, digit] of Object.entries(NUMBER_WORDS)) {
+    // Replace whole-word occurrences
+    const re = new RegExp(`\\b${word}\\b`, "gi");
+    t = t.replace(re, digit);
+  }
+
+  // 3. Fix common STT mishear "too" / "to" used as a number before items
+  // e.g., "add too apples" → "add 2 apples"
+  t = t.replace(/\badd\s+too\s+/gi, "add 2 ");
+  t = t.replace(/\bbuy\s+too\s+/gi, "buy 2 ");
+  t = t.replace(/\bget\s+too\s+/gi, "get 2 ");
+  t = t.replace(/\bi need too\s+/gi, "i need 2 ");
+
+  // 4. Fix "for" misheard as a number: "add for apples" → "add 4 apples"
+  t = t.replace(/\b(add|buy|get|order|put)\s+for\s+(?=[a-z])/gi, (match, verb) => `${verb} 4 `);
+
+  // 5. Remove leading noise phrases users commonly say before a command
+  t = t.replace(/^(hey|okay|ok|please|can you|could you|i want to|i'd like to|i would like to|can i get|i'd like)\s+/i, "");
+
+  // 6. Normalize whitespace
+  t = t.replace(/\s{2,}/g, " ").trim();
+
+  // 7. Strip trailing punctuation artifacts from STT
+  t = t.replace(/[.,!?;:]+$/, "").trim();
+
+  return t;
+}
+
 export class VoiceHandler {
   constructor({ onTranscript, onStateChange, onError, onAudioStream, onBargeIn }) {
     this.onTranscript = onTranscript || (() => {});
@@ -68,9 +121,11 @@ export class VoiceHandler {
         }
 
         if (finalTranscript.trim() !== "") {
+          // Normalize STT output before dispatching — removes fillers, converts number words, fixes mishears
+          const normalizedFinal = normalizeTranscript(finalTranscript.trim());
           this.onTranscript({
             interim: "",
-            final: finalTranscript.trim()
+            final: normalizedFinal
           });
         } else if (interimTranscript.trim() !== "") {
           this.onTranscript({

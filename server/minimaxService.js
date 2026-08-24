@@ -12,30 +12,133 @@ const MINIMAX_TTS_URL = process.env.MINIMAX_TTS_URL || "https://api.minimax.io/v
 // Memory cache for synthesized audio to prevent duplicate API calls
 const audioCache = new Map();
 
+// -----------------------------------------------------------------------
+// STEP 0 — Server-side transcript normalization (mirrors client-side logic)
+// Ensures both typed and voice inputs go through the same cleaning pipeline.
+// -----------------------------------------------------------------------
+function normalizeServerTranscript(raw) {
+  if (!raw || typeof raw !== "string") return raw;
+  let t = raw.trim();
+
+  // Strip filler/hesitation words
+  t = t.replace(/\b(um+|uh+|hmm+|err+|like,?|you know,?|kind of,?|sort of,?|basically,?|actually,?|literally,?|right,?|okay so,?|so like,?|i mean,?)\b/gi, " ");
+
+  // Number word → digit conversion
+  const NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12",
+    "a dozen": "12", "dozen": "12", "half a dozen": "6",
+    "a few": "3", "a couple": "2", "couple of": "2", "couple": "2"
+  };
+  for (const [word, digit] of Object.entries(NUMBER_WORDS)) {
+    const re = new RegExp(`\\b${word}\\b`, "gi");
+    t = t.replace(re, digit);
+  }
+
+  // Fix STT mishears: "too" as quantity word
+  t = t.replace(/\b(add|buy|get|order|i need|put)\s+too\s+/gi, (m, v) => `${v} 2 `);
+  // Fix "for" misheard as digit 4 before a noun
+  t = t.replace(/\b(add|buy|get|order|put)\s+for\s+(?=[a-z])/gi, (m, v) => `${v} 4 `);
+
+  // Remove leading politeness / noise phrases
+  t = t.replace(/^(hey|okay|ok|please|can you|could you|i want to|i'd like to|i would like to|can i get|i'd like)\s+/i, "");
+
+  // Normalize whitespace and trailing punctuation
+  t = t.replace(/\s{2,}/g, " ").trim().replace(/[.,!?;:]+$/, "").trim();
+
+  return t;
+}
+
+// -----------------------------------------------------------------------
+// STEP 1 — Multi-Intent Chunking
+// Splits compound commands like "add milk and then remove bread and show cart"
+// into independent sub-intents and processes them sequentially.
+// -----------------------------------------------------------------------
+
+// Action verb anchors that signal a new intent boundary in a compound command
+const ACTION_VERBS = [
+  "add", "buy", "order", "get", "put",
+  "remove", "delete", "take out", "drop",
+  "show", "view", "check", "list",
+  "clear", "empty", "reset",
+  "search", "find",
+  "change", "update", "set", "increase", "decrease", "make",
+  "checkout", "place order",
+  "substitute", "recommend"
+];
+
 /**
- * Fast-path deterministic classifier (< 2ms response time)
- * Accurately parses standard shopping intents, speech typos (card/car/cart), single items, cart questions, and store inquiries.
+ * Splits a compound voice query into atomic sub-queries.
+ * Handles: "and then", "also", "after that", and verb-anchored "and X" splits.
+ * Returns an array of normalized sub-query strings.
  */
+function chunkCompoundQuery(transcript) {
+  if (!transcript) return [transcript];
+
+  // Split on explicit multi-intent phrases first
+  let parts = transcript
+    .split(/\s+and\s+then\s+|\s+after\s+that\s+|\s+also\s+(?=(?:add|remove|delete|clear|search|find|show|check|change|update|checkout|buy|get)\b)/i)
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  // For remaining "and" conjunctions, detect if what follows starts a new action verb
+  const finalParts = [];
+  for (const part of parts) {
+    // Check for "and <action_verb>" pattern within this part
+    const verbPattern = new RegExp(
+      `\\s+and\\s+(${ACTION_VERBS.join("|")})\\b`,
+      "i"
+    );
+    const split = part.split(verbPattern);
+    // split produces: [prefix, capturedVerb, ...rest]
+    if (split.length > 1) {
+      finalParts.push(split[0].trim());
+      // Reconstruct the subsequent verb+rest chunks
+      // split = [prefix, verb1, remainder1, verb2, remainder2, ...]
+      for (let i = 1; i < split.length; i += 2) {
+        const verb = split[i];
+        const rest = split[i + 1] || "";
+        finalParts.push(`${verb} ${rest}`.trim());
+      }
+    } else {
+      finalParts.push(part);
+    }
+  }
+
+  return finalParts.filter(p => p.length > 0);
+}
+
+// -----------------------------------------------------------------------
+// STEP 2 — Fast-Path Deterministic Classifier (< 2ms response time)
+// Precisely classifies standard shopping intents without calling LLM.
+// All regex patterns are carefully ordered and scoped to avoid conflicts.
+// -----------------------------------------------------------------------
 function fastPathClassify(userTranscript, currentShoppingList = []) {
   if (!userTranscript || typeof userTranscript !== "string") return null;
   const raw = userTranscript.trim();
+  // Normalize for matching: lowercase, strip punctuation
   const lower = raw.toLowerCase().replace(/[?!.,;:]/g, "").trim();
 
-  // 1. GREETING / CHAT / HINDI CONVERSATION
-  if (/^(hello|hi|hey|good\s+morning|good\s+evening|who\s+are\s+you|help|what\s+can\s+you\s+do)$/i.test(lower) || lower.includes("mere mein") || lower.includes("kaise ho")) {
+  // ── 1. GREETING / CHAT ──────────────────────────────────────────────────
+  if (/^(hello|hi+|hey+|good\s+(morning|evening|afternoon|night)|who\s+are\s+you|help me|what\s+can\s+you\s+do)$/.test(lower)) {
     return {
       intent: "CHAT",
       detectedLanguage: "en",
-      spokenFeedback: "Hello! I am VoiceCart AI. You can ask me to add groceries, find substitutes, check your cart, or place an order.",
+      spokenFeedback: "Hello! I'm VoiceCart AI. You can ask me to add groceries, remove items, find substitutes, check your cart, or place an order.",
       items: []
     };
   }
 
-  // 2. CLEAR Intent (Handles "remove all the items present in my cart", "clear my cart", "empty cart", "delete everything")
-  if (/^(clear|empty|reset|delete\s+all|remove\s+all|delete\s+everything|remove\s+everything)/i.test(lower) || 
-      lower.includes("remove all") || lower.includes("delete all") || lower.includes("clear all") || 
-      lower.includes("empty cart") || lower.includes("clear my card") || lower.includes("clear cart") ||
-      lower === "clear" || lower === "empty") {
+  // ── 2. CLEAR Intent ──────────────────────────────────────────────────────
+  // IMPORTANT: Must fire BEFORE the cart/card check, and must NOT match "card" generically.
+  // Uses word-boundary matching to avoid "card" in "credit card" etc.
+  if (
+    /^(clear|empty|reset|delete\s+all|remove\s+all|delete\s+everything|remove\s+everything)\b/i.test(lower) ||
+    /\b(clear|empty)\s+(my\s+|the\s+|all\s+)?(cart|basket|list|shopping\s+list)\b/i.test(lower) ||
+    /\bremove\s+all\s+(items?|products?|things?)?\s*(from\s+(my\s+|the\s+)?(cart|list))?\b/i.test(lower) ||
+    lower === "clear" || lower === "empty" || lower === "clear cart" || lower === "empty cart"
+  ) {
     return {
       intent: "CLEAR",
       detectedLanguage: "en",
@@ -44,42 +147,8 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 3. STORE INVENTORY / CATALOG INQUIRY (e.g. "how much items i have in my store", "what items in the store", "what do you have in store")
-  if (/(in\s+(my|the|our|your)?\s*(store|shop|market|catalog|inventory|app)|what\s+do\s+you\s+sell|all\s+the\s+quantities\s+in\s+store)/i.test(lower) && !lower.startsWith("add") && !lower.startsWith("buy")) {
-    return {
-      intent: "SEARCH",
-      detectedLanguage: "en",
-      spokenFeedback: "Our store has 24 fresh grocery items in stock across 8 categories: Produce, Dairy & Eggs, Bakery, Pantry, Meat, Beverages, Snacks, and Household essentials.",
-      items: [],
-      searchParams: { query: "", category: "All" }
-    };
-  }
-
-  // 4. SHOW_CART & CART COST / QUANTITY QUESTIONS
-  // Handles:
-  // - "what is the cost of my total items present in the car"
-  // - "how much items in the cart"
-  // - "what is the price of the carts that contains the items"
-  // - "how many items do i have in my cart"
-  // - "what's in my cart" / "view cart" / "show cart" / "cart total"
-  const isCartCostOrQtyQuestion = 
-    /(cost|price|total|value|amount|quantit|how\s+much|how\s+many).*(cart|card|car|order|items?|products?|bag)/i.test(lower) ||
-    /^(what('s|\s+is|\s+do\s+i\s+have|\s+you\s+have)\s+.*(cart|card|car|list|basket))/i.test(lower) ||
-    /^(show|view|check|list)\s+.*(cart|card|car|list|basket|order|items)/i.test(lower) ||
-    /(total\s+(cost|price|bill|amount)|what\s+is\s+the\s+total|how\s+much\s+total)/i.test(lower) ||
-    lower === "cart" || lower === "my cart" || lower === "the cart" || lower === "view cart" || lower === "total" || lower === "total price";
-
-  if (isCartCostOrQtyQuestion && !lower.startsWith("add") && !lower.startsWith("buy") && !lower.startsWith("remove") && !lower.startsWith("delete")) {
-    return {
-      intent: "SHOW_CART",
-      detectedLanguage: "en",
-      spokenFeedback: "Here is your cart summary with all current items, quantities, and total cost.",
-      items: []
-    };
-  }
-
-  // 5. CHECKOUT Intent
-  if (/^(checkout(\s+now)?|check\s+out(\s+now)?|place\s+(my\s+|the\s+)?order|buy\s+(now|everything|all)|order\s+now|complete\s+(my\s+)?(order|purchase)|pay\s+now)$/i.test(lower)) {
+  // ── 3. CHECKOUT Intent ───────────────────────────────────────────────────
+  if (/^(checkout(\s+now)?|check\s+out(\s+now)?|place\s+(my\s+|the\s+)?order|buy\s+(now|everything|all)|order\s+now|complete\s+(my\s+)?(order|purchase)|pay\s+now)$/.test(lower)) {
     return {
       intent: "CHECKOUT",
       detectedLanguage: "en",
@@ -88,8 +157,51 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 6. GET_RECOMMENDATIONS Intent
-  if (/^(what\s+should\s+i\s+buy|what\s+do\s+i\s+need|recommendations|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items|specials|fruits)|suggestions|suggest\s+something)/i.test(lower)) {
+  // ── 4. SHOW_CART — Cart cost, quantity, content questions ────────────────
+  // Very precise: must NOT fire when query also starts with "add", "buy", "remove".
+  // Also handles the common STT error "car" for "cart".
+  // "car" as cart-substitute is only valid when preceded by cart-context words.
+  const isCartQuery =
+    /^(what('s|\s+is|\s+do\s+i\s+have|\s+are\s+in)?\s+(in\s+)?(my\s+|the\s+)?(cart|basket|list|bag))/.test(lower) ||
+    /^(show|view|check|display|list)\s+(me\s+)?(my\s+|the\s+)?(cart|basket|list|items|order)/.test(lower) ||
+    /\b(how\s+much|total\s+cost|total\s+price|total\s+bill|what\s+is\s+the\s+total)\b/.test(lower) ||
+    /\bhow\s+many\s+items?\s+(do\s+i\s+have|are\s+(in|on)\s+(my|the))/.test(lower) ||
+    /(cost|price|total|value|amount)\s+(of\s+)?(my\s+|the\s+)?(cart|basket|list|bag|items?)/.test(lower) ||
+    /\b(cart|basket|my\s+list)\s+(total|summary|cost|price)\b/.test(lower) ||
+    lower === "cart" || lower === "my cart" || lower === "view cart" || lower === "show cart" ||
+    lower === "total" || lower === "total price" || lower === "shopping list" || lower === "what is in my cart";
+
+  const startsWithAction = /^(add|buy|order|remove|delete|take out|drop|clear|empty)\b/.test(lower);
+
+  if (isCartQuery && !startsWithAction) {
+    return {
+      intent: "SHOW_CART",
+      detectedLanguage: "en",
+      spokenFeedback: "Here is your cart summary with all current items, quantities, and total cost.",
+      items: []
+    };
+  }
+
+  // ── 5. STORE INVENTORY / CATALOG INQUIRY ────────────────────────────────
+  // Only fires for explicit "what do you have / sell / carry" queries — NOT cart queries.
+  if (
+    /\bwhat\s+(do\s+you\s+(have|sell|carry|offer)|items?\s+(do\s+you\s+have|are\s+available))\b/.test(lower) ||
+    /\b(in\s+(the|our|your)\s+(store|shop|market|catalog|inventory))\b/.test(lower) ||
+    /\ball\s+(the\s+)?(quantities|items|products)\s+in\s+(the\s+|your\s+|our\s+)?store\b/.test(lower)
+  ) {
+    if (!startsWithAction) {
+      return {
+        intent: "SEARCH",
+        detectedLanguage: "en",
+        spokenFeedback: "Our store has 24 fresh grocery items across 8 categories: Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, and Household essentials.",
+        items: [],
+        searchParams: { query: "", category: "All" }
+      };
+    }
+  }
+
+  // ── 6. GET_RECOMMENDATIONS Intent ────────────────────────────────────────
+  if (/^(what\s+should\s+i\s+(buy|get|add)|what\s+do\s+i\s+need|recommendations?|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items?|specials?|fruits?)|suggestions?|suggest\s+something|what('s|\s+is)\s+on\s+sale)$/.test(lower)) {
     return {
       intent: "GET_RECOMMENDATIONS",
       detectedLanguage: "en",
@@ -98,10 +210,10 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 7. GET_SUBSTITUTE Intent
+  // ── 7. GET_SUBSTITUTE Intent ─────────────────────────────────────────────
   const subMatch = lower.match(/(?:substitute|alternative|replace|swap|instead\s+of)\s+(?:for\s+)?([a-z0-9\s]+)/i);
-  if (subMatch && !lower.startsWith("add") && !lower.startsWith("buy")) {
-    const target = subMatch[1].replace(/please|now|thanks/gi, "").trim();
+  if (subMatch && !startsWithAction) {
+    const target = subMatch[1].replace(/\b(please|now|thanks|me)\b/gi, "").trim();
     return {
       intent: "GET_SUBSTITUTE",
       detectedLanguage: "en",
@@ -111,14 +223,17 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 8. SEARCH Intent
-  if (lower.startsWith("search") || lower.startsWith("find") || lower.includes("under $") || lower.includes("under ")) {
+  // ── 8. SEARCH Intent ─────────────────────────────────────────────────────
+  if (
+    /^(search(\s+for)?|find(\s+me)?|show\s+me|look\s+for)\b/.test(lower) ||
+    /under\s+\$?\d/.test(lower)
+  ) {
     const priceMatch = lower.match(/under\s+\$?(\d+(?:\.\d+)?)/i);
     const maxPrice = priceMatch ? parseFloat(priceMatch[1]) : null;
     let cleanQuery = lower
-      .replace(/^(search|find|show\s+me|look\s+for)\s+(for\s+)?/i, "")
+      .replace(/^(search(\s+for)?|find(\s+me)?|show\s+me|look\s+for)\s+/i, "")
       .replace(/under\s+\$?\d+(?:\.\d+)?/i, "")
-      .replace(/please|fast|now/gi, "")
+      .replace(/\b(please|fast|now|for\s+me)\b/gi, "")
       .trim();
 
     return {
@@ -126,25 +241,23 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
       detectedLanguage: "en",
       spokenFeedback: `Searching for ${cleanQuery || "items"} in our store catalog.`,
       items: [],
-      searchParams: {
-        query: cleanQuery,
-        maxPrice
-      }
+      searchParams: { query: cleanQuery, maxPrice }
     };
   }
 
-  // 9. REMOVE Intent (e.g. "remove the milk from the card", "delete bread", "take out apples")
-  if (lower.startsWith("remove") || lower.startsWith("delete") || lower.startsWith("take out") || lower.startsWith("drop")) {
+  // ── 9. REMOVE Intent ─────────────────────────────────────────────────────
+  if (/^(remove|delete|take\s+out|drop)\b/.test(lower)) {
     const clean = lower
       .replace(/^(remove|delete|take\s+out|drop)\s+/i, "")
-      .replace(/\s+(from\s+(my\s+|the\s+)?(cart|card|car|list)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
+      .replace(/\s+(from\s+(my\s+|the\s+)?(cart|card|car|list|basket)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
       .trim();
 
     const parts = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
     const items = parts.map(p => {
-      const name = p.trim().replace(/^(the|a|an|some|my|all|pack of|bottle of|bottles of|box of|loaf of)\s+/gi, "").trim();
+      const name = p.trim().replace(/^(the|a|an|some|my|all|pack\s+of|bottle\s+of|bottles\s+of|box\s+of|loaf\s+of|bunch\s+of)\s+/gi, "").trim();
       return { name: name || p.trim(), quantity: 1 };
-    });
+    }).filter(i => i.name);
+
     return {
       intent: "REMOVE",
       detectedLanguage: "en",
@@ -153,23 +266,32 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 10. MODIFY_QTY Intent (e.g. "change the milk to 3", "update milk to 2", "make eggs 4", "change quantity of bread to 2")
-  const modMatch = lower.match(/(?:change|make|update|set|increase|decrease)\s+(?:the\s+|my\s+|quantity\s+of\s+)?([a-z\s]+?)\s+(?:quantity\s+)?(?:to\s+)?(\d+)/i);
+  // ── 10. MODIFY_QTY Intent ────────────────────────────────────────────────
+  // FIX: Must NOT match "make sure", "change my mind", "update my list" etc.
+  // Requires: verb + item_name + optional "quantity" + "to" + digit
+  const modMatch = lower.match(
+    /^(?:change|update|set|increase|decrease|make)\s+(?:the\s+|my\s+)?(?:quantity\s+of\s+)?([a-z](?:[a-z\s]*?[a-z])?)(?:\s+quantity)?\s+to\s+(\d+)$/i
+  );
   if (modMatch) {
-    const rawTarget = modMatch[1].replace(/quantity|of|the|my|from|cart|card|car/gi, "").trim();
+    const rawTarget = modMatch[1]
+      .replace(/\b(quantity|of|the|my|from|cart|card|car)\b/gi, "")
+      .trim();
     const cleanName = rawTarget.replace(/^(the|a|an|some|my|all)\s+/gi, "").trim();
     const qty = parseInt(modMatch[2], 10);
-    return {
-      intent: "MODIFY_QTY",
-      detectedLanguage: "en",
-      spokenFeedback: `Updating quantity of ${cleanName || rawTarget} to ${qty}.`,
-      items: [{ name: cleanName || rawTarget, quantity: qty }]
-    };
+    if (cleanName && !isNaN(qty)) {
+      return {
+        intent: "MODIFY_QTY",
+        detectedLanguage: "en",
+        spokenFeedback: `Updating ${cleanName} to ${qty}.`,
+        items: [{ name: cleanName, quantity: qty }]
+      };
+    }
   }
 
-  // 11. GENERAL QUESTION GUARD:
-  // If the query is a question starting with question words, never treat it as an ADD item!
-  if (/^(what|how|who|why|where|when|which|is\s+there|are\s+there|do\s+you|can\s+you|tell\s+me)\b/i.test(lower)) {
+  // ── 11. GENERAL QUESTION GUARD ───────────────────────────────────────────
+  // IMPORTANT FIX: This must check for cart/show_cart queries FIRST (done above).
+  // Only questions that don't relate to the cart end up here as CHAT.
+  if (/^(what|how|who|why|where|when|which|is\s+there|are\s+there|do\s+you|can\s+you|tell\s+me)\b/.test(lower) && !isCartQuery) {
     return {
       intent: "CHAT",
       detectedLanguage: "en",
@@ -178,31 +300,32 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // 12. ADD Intent (Handles "Add 2 apples and 1 milk", "buy milk", "i need bread")
-  if (lower.startsWith("add") || lower.startsWith("buy") || lower.startsWith("i need") || lower.startsWith("put") || lower.startsWith("get") || lower.startsWith("order")) {
+  // ── 12. ADD Intent ───────────────────────────────────────────────────────
+  if (/^(add|buy|i\s+need|put|get|order)\b/.test(lower)) {
     const clean = lower
       .replace(/^(add|buy|i\s+need|put|get|order)\s+/i, "")
-      .replace(/\s+(to\s+(my\s+|the\s+)?(cart|card|car|list)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now)$/gi, "")
+      .replace(/\s+(to\s+(my\s+|the\s+)?(cart|card|car|list|basket)|in\s+(my\s+|the\s+)?(cart|card|car|list)|please|now|for\s+me)$/gi, "")
       .trim();
 
+    // Reject noise-only leftovers
     if (["cart", "card", "car", "the cart", "my cart", "order", "checkout", "everything", "list", "something"].includes(clean)) {
       return null;
     }
 
+    // Parse multiple items separated by comma/and/+
     const rawChunks = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
     const items = [];
 
     for (const chunk of rawChunks) {
-      const match = chunk.match(/^(?:(\d+)\s*(?:bottles?|packs?|boxes?|bunches?|loaves?|loaf|lbs?|items?|bags?|cans?|jars?)?\s*(?:of\s+)?)?(.+)$/i);
+      // Match: [quantity] [unit?] [of?] item_name
+      const match = chunk.match(/^(?:(\d+)\s*(?:bottles?|packs?|boxes?|bunches?|loaves?|loaf|lbs?|items?|bags?|cans?|jars?|liters?|litres?|kg|grams?|oz)?\s*(?:of\s+)?)?(.+)$/i);
       if (match) {
         const qty = match[1] ? parseInt(match[1], 10) : 1;
-        const name = (match[2] || chunk).trim();
+        const name = (match[2] || chunk).trim()
+          .replace(/^(the|a|an|some|fresh|organic)\s+/gi, "")
+          .trim();
         if (name && !["cart", "card", "car", "my cart", "the cart", "list", "order"].includes(name)) {
-          items.push({
-            name,
-            quantity: Math.max(1, qty),
-            unit: "item"
-          });
+          items.push({ name, quantity: Math.max(1, qty), unit: "item" });
         }
       }
     }
@@ -211,15 +334,21 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
       return {
         intent: "ADD",
         detectedLanguage: "en",
-        spokenFeedback: `Adding ${items.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ")} to your cart.`,
+        spokenFeedback: `Adding ${items.map(i => `${i.quantity > 1 ? i.quantity + "x " : ""}${i.name}`).join(", ")} to your cart.`,
         items
       };
     }
   }
 
-  // 13. Single Item Shortcut (e.g., user just says "juice", "milk", "bread", "apples", "eggs")
-  const singleItemTokens = ["juice", "milk", "bread", "eggs", "apples", "bananas", "avocados", "coffee", "tea", "cheese", "pasta", "oats", "chicken", "salmon", "tofu", "spinach", "tomatoes", "croissant"];
-  if (singleItemTokens.includes(lower)) {
+  // ── 13. Single Item Shortcut ──────────────────────────────────────────────
+  // Recognizes bare product names spoken without a verb
+  const knownSingleItems = new Set([
+    "juice", "milk", "bread", "eggs", "apples", "bananas", "avocados", "coffee", "tea",
+    "cheese", "pasta", "oats", "chicken", "salmon", "tofu", "spinach", "tomatoes",
+    "croissant", "bagels", "butter", "yogurt", "rice", "honey", "olive oil",
+    "almonds", "chocolate", "water", "sparkling water"
+  ]);
+  if (knownSingleItems.has(lower)) {
     return {
       intent: "ADD",
       detectedLanguage: "en",
@@ -228,11 +357,20 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  return null; // Defer to MiniMax-M3 LLM for complex/multilingual/conversational queries
+  return null; // Defer complex/multilingual/conversational queries to MiniMax-M3 LLM
 }
 
+// -----------------------------------------------------------------------
+// MAIN EXPORT — Parses a voice transcript using hybrid fast-path + LLM
+// -----------------------------------------------------------------------
 /**
  * Parses user voice transcript or text using High-Speed Hybrid Architecture.
+ * Pipeline:
+ *  1. Server-side normalization
+ *  2. Multi-intent chunking (for compound commands)
+ *  3. Fast-path deterministic classifier per chunk (< 2ms)
+ *  4. MiniMax-M3 LLM for complex/multilingual queries
+ *  5. Rule-based fallback if network fails
  */
 export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = []) {
   if (!userTranscript || userTranscript.trim() === "") {
@@ -244,27 +382,55 @@ export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppi
     };
   }
 
-  // 1. Check Fast-Path (< 2ms response time)
-  const fastResult = fastPathClassify(userTranscript, currentShoppingList);
+  // 1. Server-side normalization
+  const normalized = normalizeServerTranscript(userTranscript);
+
+  // 2. Multi-intent chunking
+  const chunks = chunkCompoundQuery(normalized);
+
+  // For single-chunk queries (the vast majority), use the standard flow
+  if (chunks.length === 1) {
+    return await classifyAndExecuteSingleChunk(chunks[0], currentShoppingList);
+  }
+
+  // For multi-chunk compound commands, process each sub-intent and merge results
+  const results = [];
+  for (const chunk of chunks) {
+    const result = await classifyAndExecuteSingleChunk(chunk, currentShoppingList);
+    results.push(result);
+  }
+
+  // Merge multi-intent results into one consolidated response
+  return mergeMultiIntentResults(results, normalized);
+}
+
+/**
+ * Classifies and returns a NLU result for a single atomic query chunk.
+ */
+async function classifyAndExecuteSingleChunk(transcript, currentShoppingList) {
+  // Fast-path classifier
+  const fastResult = fastPathClassify(transcript, currentShoppingList);
   if (fastResult) {
+    console.log(`[NLU Fast-Path] "${transcript}" → ${fastResult.intent}`);
     return fastResult;
   }
 
-  // 2. Complex or Multilingual Queries: MiniMax-M3 LLM
+  // Complex/multilingual → MiniMax-M3 LLM
+  console.log(`[NLU LLM Call] "${transcript}" — deferring to MiniMax-M3`);
   const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} (${p.category})`).join(", ");
 
-  const systemPrompt = `You are VoiceCart AI shopping assistant. Return strict JSON.
+  const systemPrompt = `You are VoiceCart AI, a shopping assistant. Respond ONLY with strict JSON.
 Store Catalog: ${catalogProductNames}
-Intents: "ADD", "REMOVE", "MODIFY_QTY", "SEARCH", "GET_SUBSTITUTE", "GET_RECOMMENDATIONS", "RECIPE_EXPAND", "CLEAR", "SHOW_CART", "CHECKOUT", "CHAT"
-Output format:
-{"intent": "ADD", "detectedLanguage": "en", "spokenFeedback": "Short 1-sentence response", "items": [{"name": "item", "quantity": 1, "category": "Pantry"}]}`;
+Valid intents: "ADD", "REMOVE", "MODIFY_QTY", "SEARCH", "GET_SUBSTITUTE", "GET_RECOMMENDATIONS", "RECIPE_EXPAND", "CLEAR", "SHOW_CART", "CHECKOUT", "CHAT"
+Output format (strict JSON, no markdown):
+{"intent":"ADD","detectedLanguage":"en","spokenFeedback":"Short 1-sentence response","items":[{"name":"item name","quantity":1,"category":"Produce"}]}`;
 
-  const userPrompt = `Cart: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity })))}
-User: "${userTranscript}"`;
+  const userPrompt = `Current cart: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity })))}
+User said: "${transcript}"`;
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s realistic timeout for remote LLM
+    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout for remote LLM
 
     const response = await fetch(`${MINIMAX_BASE_URL}/chat/completions`, {
       method: "POST",
@@ -280,19 +446,23 @@ User: "${userTranscript}"`;
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 250
+        max_tokens: 500  // FIX: Increased from 250 to handle multi-item responses
       })
     });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      return fallbackRuleBasedParser(userTranscript, currentShoppingList);
+      console.warn(`[MiniMax LLM] API error ${response.status} — using rule-based fallback`);
+      return fallbackRuleBasedParser(transcript, currentShoppingList);
     }
 
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || "";
+
+    // Strip <think>...</think> chain-of-thought blocks if present
     content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
+    // Strip markdown code fence wrappers
     if (content.startsWith("```json")) content = content.substring(7);
     if (content.startsWith("```")) content = content.substring(3);
     if (content.endsWith("```")) content = content.substring(0, content.length - 3);
@@ -302,14 +472,20 @@ User: "${userTranscript}"`;
     try {
       parsed = JSON.parse(content);
     } catch (e) {
+      // Try extracting JSON object from response text
       const match = content.match(/\{[\s\S]*\}/);
       if (match) {
-        parsed = JSON.parse(match[0]);
+        try {
+          parsed = JSON.parse(match[0]);
+        } catch {
+          return fallbackRuleBasedParser(transcript, currentShoppingList);
+        }
       } else {
-        return fallbackRuleBasedParser(userTranscript, currentShoppingList);
+        return fallbackRuleBasedParser(transcript, currentShoppingList);
       }
     }
 
+    // Normalize items array from LLM response
     if (parsed.items && Array.isArray(parsed.items)) {
       parsed.items = parsed.items.map(item => ({
         name: typeof item === "string" ? item : (item.name || "item"),
@@ -321,10 +497,56 @@ User: "${userTranscript}"`;
       parsed.items = [];
     }
 
+    console.log(`[NLU LLM Result] Intent: ${parsed.intent}, Items: ${parsed.items?.length || 0}`);
     return parsed;
   } catch (err) {
-    return fallbackRuleBasedParser(userTranscript, currentShoppingList);
+    if (err.name === "AbortError") {
+      console.warn("[MiniMax LLM] Request timed out — using rule-based fallback");
+    } else {
+      console.error("[MiniMax LLM] Error:", err.message);
+    }
+    return fallbackRuleBasedParser(transcript, currentShoppingList);
   }
+}
+
+/**
+ * Merges an array of per-chunk NLU results into a unified response object.
+ * Used for compound voice commands like "add milk and remove bread".
+ */
+function mergeMultiIntentResults(results, originalTranscript) {
+  if (results.length === 0) {
+    return {
+      intent: "CHAT",
+      spokenFeedback: "I processed your command.",
+      items: [],
+      detectedLanguage: "en"
+    };
+  }
+
+  if (results.length === 1) return results[0];
+
+  // Determine primary intent (first non-CHAT result wins)
+  const primaryResult = results.find(r => r.intent !== "CHAT") || results[0];
+
+  // Collect all items and actions across all chunks
+  const allItems = results.flatMap(r => r.items || []);
+  const allIntents = results.map(r => r.intent);
+
+  // Build combined spoken feedback
+  const feedbacks = results.map(r => r.spokenFeedback).filter(Boolean);
+  const combinedFeedback = feedbacks.join(" Then, ");
+
+  return {
+    ...primaryResult,
+    intent: primaryResult.intent,
+    // Signal to server.js that this is a multi-intent command
+    isMultiIntent: true,
+    multiIntentResults: results,
+    allIntents,
+    items: allItems,
+    spokenFeedback: combinedFeedback,
+    detectedLanguage: primaryResult.detectedLanguage || "en"
+  };
 }
 
 /**
@@ -344,7 +566,7 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s TTS limit
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // FIX: Increased from 4s→8s for neural TTS
 
     const payload = {
       model: "speech-2.8-hd",
@@ -386,6 +608,7 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
     const base64Audio = audioBuffer.toString("base64");
     const audioDataUrl = `data:audio/mp3;base64,${base64Audio}`;
 
+    // Evict oldest cached audio if cache is full
     if (audioCache.size > 150) {
       const firstKey = audioCache.keys().next().value;
       audioCache.delete(firstKey);
@@ -394,28 +617,39 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
 
     return { audioDataUrl, audioBuffer };
   } catch (err) {
+    if (err.name === "AbortError") {
+      console.warn("[TTS] Request timed out after 8s — returning null");
+    }
     return null;
   }
 }
 
 /**
- * Robust fallback parser in case of offline/network issues
+ * Robust fallback parser used when the LLM is unavailable (offline / timeout).
+ * Uses rule-based matching as a safety net.
  */
 function fallbackRuleBasedParser(transcript, currentList = []) {
   const lower = (transcript || "").toLowerCase().trim();
-  
-  if (lower.includes("clear") || lower.includes("empty list") || lower.includes("card") || lower.includes("cart")) {
-    if (lower.startsWith("clear") || lower.includes("empty")) {
-      return {
-        intent: "CLEAR",
-        detectedLanguage: "en",
-        spokenFeedback: "Cleared all items from your shopping list.",
-        items: []
-      };
-    }
+
+  // CLEAR — must match ONLY clear/empty of the cart, NOT "card" generically
+  if (
+    /\b(clear|empty)\s+(my\s+|the\s+|all\s+)?(cart|basket|list|shopping\s+list)\b/.test(lower) ||
+    lower.startsWith("clear") || lower === "empty"
+  ) {
+    return {
+      intent: "CLEAR",
+      detectedLanguage: "en",
+      spokenFeedback: "Cleared all items from your shopping list.",
+      items: []
+    };
   }
 
-  if (lower.includes("what") && (lower.includes("cart") || lower.includes("card") || lower.includes("car") || lower.includes("cost") || lower.includes("total") || lower.includes("have"))) {
+  // SHOW_CART — questions about cart content, cost, quantity
+  if (
+    (lower.includes("what") || lower.includes("how")) &&
+    (lower.includes("cart") || lower.includes("list") || lower.includes("cost") ||
+     lower.includes("total") || lower.includes("have") || lower.includes("items"))
+  ) {
     return {
       intent: "SHOW_CART",
       detectedLanguage: "en",
@@ -424,34 +658,36 @@ function fallbackRuleBasedParser(transcript, currentList = []) {
     };
   }
 
-  if (lower.includes("remove") || lower.includes("delete")) {
-    const cleanItem = lower.replace(/remove|delete|from my list|from list|please/gi, "").trim();
+  // REMOVE
+  if (lower.includes("remove") || lower.includes("delete") || lower.includes("take out")) {
+    const cleanItem = lower
+      .replace(/\b(remove|delete|take\s+out|from\s+my\s+list|from\s+list|please)\b/gi, "")
+      .trim();
     return {
       intent: "REMOVE",
       detectedLanguage: "en",
-      spokenFeedback: `Removed ${cleanItem} from your list.`,
+      spokenFeedback: `Removing ${cleanItem} from your list.`,
       items: [{ name: cleanItem, quantity: 1 }]
     };
   }
 
-  if (lower.includes("find") || lower.includes("search") || lower.includes("under $")) {
-    const priceMatch = lower.match(/under \$?(\d+(\.\d+)?)/);
+  // SEARCH
+  if (lower.includes("find") || lower.includes("search") || /under\s+\$/.test(lower)) {
+    const priceMatch = lower.match(/under\s+\$?(\d+(\.\d+)?)/);
     const maxPrice = priceMatch ? parseFloat(priceMatch[1]) : null;
-    const cleanQuery = lower.replace(/find|search for|under \$\d+/gi, "").trim();
+    const cleanQuery = lower.replace(/\b(find|search\s+for|under\s+\$\d+)\b/gi, "").trim();
     return {
       intent: "SEARCH",
       detectedLanguage: "en",
       spokenFeedback: `Searching for items matching ${cleanQuery || "your filter"}.`,
       items: [],
-      searchParams: {
-        query: cleanQuery,
-        maxPrice
-      }
+      searchParams: { query: cleanQuery, maxPrice }
     };
   }
 
-  if (lower.includes("substitute") || lower.includes("alternative")) {
-    const cleanItem = lower.replace(/substitute for|alternative for|replace/gi, "").trim();
+  // GET_SUBSTITUTE
+  if (lower.includes("substitute") || lower.includes("alternative") || lower.includes("replace")) {
+    const cleanItem = lower.replace(/\b(substitute\s+(for)?|alternative\s+(for)?|replace)\b/gi, "").trim();
     return {
       intent: "GET_SUBSTITUTE",
       detectedLanguage: "en",
@@ -461,15 +697,15 @@ function fallbackRuleBasedParser(transcript, currentList = []) {
     };
   }
 
-  // Default: Add item
-  const cleanAdd = lower.replace(/add|i need|buy|put|to my list|to list|please/gi, "").trim();
+  // Default: ADD item
+  const cleanAdd = lower.replace(/\b(add|i\s+need|buy|put|to\s+my\s+list|to\s+list|please)\b/gi, "").trim();
   const qtyMatch = cleanAdd.match(/^(\d+)\s*(.*)/);
   const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
-  const itemName = qtyMatch ? qtyMatch[2] : cleanAdd;
+  const itemName = (qtyMatch ? qtyMatch[2] : cleanAdd).trim();
 
-  // Best effort category guess
+  // Best-effort category guess
   let category = "Pantry";
-  if (/apple|banana|berry|spinach|lemon|carrot|produce|fruit|salad|avocado/i.test(itemName)) category = "Produce";
+  if (/apple|banana|berry|spinach|lemon|carrot|produce|fruit|salad|avocado|tomato/i.test(itemName)) category = "Produce";
   else if (/milk|egg|cheese|yogurt|butter|dairy/i.test(itemName)) category = "Dairy & Eggs";
   else if (/bread|croissant|bagel|sourdough|bakery/i.test(itemName)) category = "Bakery";
   else if (/chicken|beef|salmon|fish|meat|tofu/i.test(itemName)) category = "Meat & Seafood";
@@ -480,10 +716,10 @@ function fallbackRuleBasedParser(transcript, currentList = []) {
   return {
     intent: "ADD",
     detectedLanguage: "en",
-    spokenFeedback: `Added ${qty} ${itemName} to your shopping list.`,
+    spokenFeedback: `Adding ${qty > 1 ? qty + "x " : ""}${itemName || "item"} to your shopping list.`,
     items: [{
       name: itemName || "item",
-      quantity: qty,
+      quantity: Math.max(1, qty),
       unit: "item",
       category,
       estimatedPrice: 3.50

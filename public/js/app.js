@@ -27,6 +27,7 @@ class VoiceShoppingApp {
     // Initial data load
     await this.refreshShoppingList();
     await this.loadCatalog();
+    await this.loadHistoryRecommendations();
     await this.loadReplenishmentSuggestions();
     await this.loadSeasonalSuggestions();
     await this.loadSubstitutes("Whole Grade A Milk");
@@ -173,6 +174,23 @@ class VoiceShoppingApp {
     };
     document.getElementById("floatingMicBtn")?.addEventListener("click", triggerFloatingVoice);
     document.getElementById("floatingVoiceLabel")?.addEventListener("click", triggerFloatingVoice);
+
+    // RFY Carousel Scroll Buttons
+    const rfyTrack = document.getElementById("rfyCarouselTrack");
+    document.getElementById("rfyScrollLeft")?.addEventListener("click", () => {
+      rfyTrack?.scrollBy({ left: -440, behavior: "smooth" });
+    });
+    document.getElementById("rfyScrollRight")?.addEventListener("click", () => {
+      rfyTrack?.scrollBy({ left: 440, behavior: "smooth" });
+    });
+
+    // RFY Refresh Button
+    document.getElementById("rfyRefreshBtn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("rfyRefreshBtn");
+      btn?.classList.add("spinning");
+      await this.loadHistoryRecommendations();
+      setTimeout(() => btn?.classList.remove("spinning"), 600);
+    });
 
     // Inline YOU form submission (Type & Press Enter or Click Arrow)
     document.getElementById("userTextForm")?.addEventListener("submit", (e) => {
@@ -591,6 +609,9 @@ class VoiceShoppingApp {
 
       // Re-render main products to sync stepper counts
       this.renderMainProducts();
+
+      // Refresh RFY section: cart changes affect which items are shown as "already in cart"
+      await this.loadHistoryRecommendations();
     } catch (err) {
       console.error("Failed to refresh shopping list:", err);
     }
@@ -658,6 +679,23 @@ class VoiceShoppingApp {
       UI.renderReplenishmentSuggestions(res.data, (id) => this.addItemFromCatalog(id));
     } catch (err) {
       console.error("Replenishment load error:", err);
+    }
+  }
+
+  /**
+   * Loads and renders the "Recommended For You" purchase-history carousel.
+   * Auto-refreshes after cart mutations so "In Cart" state is always accurate.
+   */
+  async loadHistoryRecommendations() {
+    try {
+      const res = await ApiClient.getHistoryRecommendations(8);
+      UI.renderHistoryRecommendations(res.data || [], async (productId) => {
+        await this.addItemFromCatalog(productId);
+        // Refresh RFY to update "In Cart" badge on the card that was just added
+        await this.loadHistoryRecommendations();
+      });
+    } catch (err) {
+      console.error("History recommendations load error:", err);
     }
   }
 
