@@ -1,7 +1,7 @@
 // server/minimaxService.js - MiniMax-M3 LLM NLP & Speech-2.8-HD Neural TTS Service
 import dotenv from "dotenv";
 import { PRODUCT_CATALOG, CATEGORIES } from "./catalogData.js";
-import { searchCatalog, getProductSubstitutes, getPredictiveReplenishment, getSeasonalAndSaleRecommendations } from "./recommendationEngine.js";
+import { searchCatalog, getProductSubstitutes, getPredictiveReplenishment, getSeasonalAndSaleRecommendations, findCatalogProduct } from "./recommendationEngine.js";
 import { autoCorrectTranscript } from "./autoCorrectService.js";
 import { ConversationMemory } from "./conversationMemory.js";
 
@@ -378,13 +378,13 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
     };
   }
 
-  // ── 13. SHOW_CART — Any query about cart contents, cost, or item count ────
-  const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
-  const COST_WORDS = /\b(how\s+much|total\s+cost|total\s+price|total\s+bill|grand\s+total|price\s+total|bill\s+total|what\s+will\s+it\s+cost|what\s+does\s+it\s+cost)\b/i;
-  const ITEM_COUNT_WORDS = /\b(how\s+many\s+items?|how\s+many\s+things?|item\s+count|items?\s+(in|present|on)\b|count\s+of\s+items?)\b/i;
-
+  // ── Common Guards & Classifiers ──────────────────────────────────────────
   const startsWithMutatingAction = /^(add|buy|order|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
   const startsWithAction = startsWithMutatingAction;
+
+  const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
+  const COST_WORDS = /\b(total\s+cost|total\s+price|total\s+bill|grand\s+total|price\s+total|bill\s+total|what\s+will\s+it\s+cost|what\s+does\s+it\s+cost|how\s+much\s+(?:is\s+my\s+cart|in\s+(?:my\s+|the\s+)?cart|is\s+the\s+total|is\s+the\s+order|do\s+i\s+owe))\b/i;
+  const ITEM_COUNT_WORDS = /\b(how\s+many\s+items?|how\s+many\s+things?|item\s+count|items?\s+(in|present|on)\b|count\s+of\s+items?)\b/i;
 
   const isCartQuery = (
     CART_WORDS.test(lower) ||
@@ -399,6 +399,42 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   const isRecommendationQuery = /\b(recommend|recommendations?|suggest|suggestions?|restock|deplet|depletion|deals?|seasonal)\b/i.test(lower);
   const hasPriceFilter = /under\s+\$?\d/i.test(lower);
 
+  // ── 12.5 COMPREHENSIVE INDIVIDUAL PRODUCT INQUIRIES (PRICE, DETAILS, STOCK) ──
+  // Matches: "tell me the price of egg", "what is the price of egg", "how much are gala apples", "tell me about whole milk", "is salmon in stock"
+  const isProductInquiry = (
+    /\b(?:tell\s+me\s+(?:the\s+)?price\s+of|show\s+(?:me\s+)?(?:the\s+)?price\s+of|what(?:'s|\s+is)\s+(?:the\s+)?(?:price|cost)\s+of|how\s+much\s+(?:is|are|does|do|for)|price\s+of|cost\s+of|tell\s+me\s+about|info\s+on|details\s+on|describe|do\s+you\s+(?:have|sell|carry)|is\s+there|are\s+there)\s+([a-z0-9\s]+?)(?:\s+cost|\s+available|\s+in\s+stock|\s+that\s+you\s+have|\s+in\s+your\s+system|\s+in\s+the\s+store|\s+please|\s+now|\s+today)*$/i.test(lower)
+  ) && !startsWithMutatingAction && !isCartQuery;
+
+  if (isProductInquiry) {
+    const rawTarget = lower
+      .replace(/\b(tell\s+me\s+(?:the\s+)?price\s+of|show\s+(?:me\s+)?(?:the\s+)?price\s+of|what(?:'s|\s+is)\s+(?:the\s+)?(?:price|cost)\s+of|how\s+much\s+(?:is|are|does|do|for)|price\s+of|cost\s+of|tell\s+me\s+about|info\s+on|details\s+on|describe|do\s+you\s+(?:have|sell|carry)|is\s+there|are\s+there|available|in\s+stock|in\s+your\s+system|in\s+the\s+store|that\s+you\s+have|cost|the|a|an|some|item|items|please|now|today)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (rawTarget && rawTarget.length >= 2) {
+      const matchedProd = findCatalogProduct(rawTarget);
+      if (matchedProd) {
+        const discountText = matchedProd.isSale ? ` (currently ${matchedProd.discountPercent}% off regular price $${matchedProd.originalPrice.toFixed(2)})` : "";
+        const dietaryText = matchedProd.dietary && matchedProd.dietary.length > 0 ? ` It is ${matchedProd.dietary.slice(0, 2).join(" and ")}.` : "";
+        
+        let feedback = `${matchedProd.name} by ${matchedProd.brand} is $${matchedProd.price.toFixed(2)}${discountText} for ${matchedProd.unit} in the ${matchedProd.category} section.${dietaryText}`;
+        if (lower.includes("price") || lower.includes("how much") || lower.includes("cost")) {
+          feedback = `${matchedProd.name} is $${matchedProd.price.toFixed(2)}${discountText} for ${matchedProd.unit}.`;
+        }
+
+        return {
+          intent: "PRODUCT_INFO",
+          detectedLanguage: "en",
+          spokenFeedback: feedback,
+          uiAction: { type: "SEARCH_STORE", payload: matchedProd.name },
+          product: matchedProd,
+          items: []
+        };
+      }
+    }
+  }
+
+  // ── 13. SHOW_CART — Any query about cart contents, cost, or item count ────
   if (isCartQuery && !startsWithMutatingAction && !hasPriceFilter && !isRecommendationQuery) {
     return {
       intent: "SHOW_CART",
@@ -423,9 +459,13 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
 
   // B) Specific Category Items Inquiry: "what items in produce", "what items do you have in bakery", "what drinks do you sell"
   const isInventoryQuery = (
-    /\b(what|which|show|list|tell\s+me|any|do\s+you\s+(have|sell|carry))\b/i.test(lower) &&
-    /\b(items?|products?|food|options?|do\s+you\s+(have|sell|carry)|is\s+there|are\s+there|available|sell|carry|in|under)\b/i.test(lower)
-  ) || /\b(what\s+(fruits?|vegetables?|veggies?|breads?|drinks?|snacks?|dairy|meats?))\b/i.test(lower);
+    !/\b(price|cost|how\s+much)\b/i.test(lower) &&
+    (
+      (/\b(what|which|show|list|tell\s+me|any|do\s+you\s+(have|sell|carry))\b/i.test(lower) &&
+       /\b(items?|products?|food|options?|do\s+you\s+(have|sell|carry)|is\s+there|are\s+there|available|sell|carry|in|under)\b/i.test(lower)) ||
+      /\b(what\s+(fruits?|vegetables?|veggies?|breads?|drinks?|snacks?|dairy|meats?))\b/i.test(lower)
+    )
+  );
 
   const CATEGORY_ITEMS_KNOWLEDGE = [
     {
@@ -1136,16 +1176,19 @@ function fallbackRuleBasedParser(transcript, currentList = []) {
     };
   }
 
-  // GET_SUBSTITUTE
-  if (lower.includes("substitute") || lower.includes("alternative") || lower.includes("replace")) {
-    const cleanItem = lower.replace(/\b(substitute\s+(for)?|alternative\s+(for)?|replace)\b/gi, "").trim();
-    return {
-      intent: "GET_SUBSTITUTE",
-      detectedLanguage: "en",
-      spokenFeedback: `Finding substitutes for ${cleanItem}.`,
-      substituteTarget: cleanItem,
-      items: []
-    };
+  // PRODUCT PRICE / COST INQUIRY
+  if (lower.includes("price") || lower.includes("cost") || lower.includes("how much")) {
+    const cleanItem = lower.replace(/\b(what|is|the|price|of|how|much|does|cost|in|your|system|store|that|you|have|today|please)\b/gi, "").trim();
+    const matched = findCatalogProduct(cleanItem);
+    if (matched) {
+      return {
+        intent: "SEARCH",
+        detectedLanguage: "en",
+        spokenFeedback: `${matched.name} is $${matched.price.toFixed(2)} for ${matched.unit}.`,
+        uiAction: { type: "SEARCH_STORE", payload: matched.name },
+        items: []
+      };
+    }
   }
 
   // Default: ADD item

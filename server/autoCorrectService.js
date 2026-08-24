@@ -210,6 +210,7 @@ const PROTECTED_WORDS = new Set([
   "dairy", "breads", "bread", "fruits", "fruit", "vegetables", "vegetable", "veggies",
   "drinks", "drink", "juices", "juice", "meats", "meat", "munchies", "cleaning",
   "sale", "sales", "deal", "deals", "discount", "discounts", "special", "specials",
+  "price", "prices", "cost", "costs", "how", "much",
   "items", "item", "store", "website", "app", "cart", "order", "orders", "fresh"
 ]);
 

@@ -68,6 +68,11 @@ export class VoiceHandler {
     this.mediaStream = null;
     this.hasMicPermission = false;
 
+    // Speech Accumulator & 3-Second Silence Debounce
+    this.accumulatedTranscript = "";
+    this.silenceTimer = null;
+    this.silenceDebounceMs = 3000; // 3 seconds pause before dispatching command
+
     this.initRecognition();
   }
 
@@ -80,7 +85,7 @@ export class VoiceHandler {
 
     try {
       this.recognition = new SpeechRecognition();
-      this.recognition.continuous = false;
+      this.recognition.continuous = true; // Continuous listening so browser doesn't cut off speech
       this.recognition.interimResults = true;
       this.recognition.maxAlternatives = 3;
       this.recognition.lang = this.selectedLanguage;
@@ -92,7 +97,6 @@ export class VoiceHandler {
       };
 
       this.recognition.onspeechstart = () => {
-        // User started speaking: interrupt any playing assistant speech immediately
         this.onBargeIn();
       };
 
@@ -105,72 +109,108 @@ export class VoiceHandler {
       };
 
       this.recognition.onresult = (event) => {
-        // Cut off any assistant speech on speech detection
         this.onBargeIn();
 
         let interimTranscript = "";
-        let finalTranscript = "";
+        let finalSegment = "";
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const item = event.results[i];
           if (item.isFinal) {
-            finalTranscript += item[0].transcript;
+            finalSegment += " " + item[0].transcript;
           } else {
-            interimTranscript += item[0].transcript;
+            interimTranscript += " " + item[0].transcript;
           }
         }
 
-        if (finalTranscript.trim() !== "") {
-          // Normalize STT output before dispatching — removes fillers, converts number words, fixes mishears
-          const normalizedFinal = normalizeTranscript(finalTranscript.trim());
+        if (finalSegment.trim()) {
+          this.accumulatedTranscript = (this.accumulatedTranscript + " " + finalSegment.trim()).trim();
+        }
+
+        const livePreview = (this.accumulatedTranscript + " " + interimTranscript).trim();
+
+        if (livePreview) {
           this.onTranscript({
-            interim: "",
-            final: normalizedFinal
-          });
-        } else if (interimTranscript.trim() !== "") {
-          this.onTranscript({
-            interim: interimTranscript.trim(),
+            interim: livePreview,
             final: ""
           });
+
+          // Reset the 3-second silence timer on any speech event
+          this.resetSilenceTimer();
         }
       };
 
       this.recognition.onerror = (event) => {
         console.warn("Speech Recognition status:", event.error);
 
-        // Ignore benign no-speech timeout (user just waited a second)
+        // Ignore benign no-speech timeout (user is pausing)
         if (event.error === "no-speech") {
           return;
         }
 
-        // Aborted is normal when user clicks stop
         if (event.error === "aborted") {
-          this.isListening = false;
-          this.onStateChange({ listening: false });
           return;
         }
 
-        this.isListening = false;
-        this.onStateChange({ listening: false, error: event.error });
         this.onError(event.error);
-
         if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") {
+          this.isListening = false;
+          this.onStateChange({ listening: false, error: event.error });
           this.promptFallbackInput("Microphone access is unavailable or blocked in your browser. Please type your command below:");
         }
       };
 
       this.recognition.onend = () => {
-        this.isListening = false;
-        this.onStateChange({ listening: false });
-
-        if (this.isContinuous) {
-          setTimeout(() => {
-            if (this.isContinuous) this.startListening(true);
-          }, 300);
+        // If listening is still supposed to be active, keep it alive unless explicitly committed or stopped
+        if (this.isListening) {
+          try {
+            this.recognition.start();
+          } catch (err) {
+            setTimeout(() => {
+              if (this.isListening) {
+                try { this.recognition.start(); } catch (e) {}
+              }
+            }, 200);
+          }
+        } else {
+          this.onStateChange({ listening: false });
         }
       };
     } catch (err) {
       console.error("Failed to initialize SpeechRecognition:", err);
+    }
+  }
+
+  resetSilenceTimer() {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+    }
+    this.silenceTimer = setTimeout(() => {
+      console.log("[VoiceHandler] 3-second silence detected — committing accumulated speech input.");
+      this.commitTranscript();
+    }, this.silenceDebounceMs);
+  }
+
+  commitTranscript() {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+
+    const raw = this.accumulatedTranscript.trim();
+    this.accumulatedTranscript = "";
+
+    if (raw !== "") {
+      const normalizedFinal = normalizeTranscript(raw);
+      this.onTranscript({
+        interim: "",
+        final: normalizedFinal
+      });
+    }
+
+    // Stop listening once speech is committed (unless in hands-free mode)
+    if (!this.isContinuous) {
+      this.stopListening();
     }
   }
 
@@ -182,7 +222,7 @@ export class VoiceHandler {
   }
 
   promptFallbackInput(message = "Enter your grocery voice command (e.g. 'Add 2 apples and milk'):") {
-    const input = window.prompt(message, "Add 2 bottles of whole milk and 1 loaf of sourdough bread");
+    const input = window.prompt(message, "what is the price of egg that you have in your system");
     if (input && input.trim() !== "") {
       this.onTranscript({ interim: "", final: input.trim() });
     }
@@ -206,15 +246,16 @@ export class VoiceHandler {
 
   startListening(continuous = false) {
     this.isContinuous = continuous;
+    this.accumulatedTranscript = "";
+    if (this.silenceTimer) clearTimeout(this.silenceTimer);
 
     if (!this.recognition) {
       this.promptFallbackInput();
       return;
     }
 
-    // Call recognition.start() synchronously to maintain Chrome's user gesture context
     try {
-      this.recognition.continuous = continuous;
+      this.recognition.continuous = true;
       this.recognition.lang = this.selectedLanguage;
       this.recognition.start();
       this.isListening = true;
@@ -236,23 +277,30 @@ export class VoiceHandler {
       } catch (err) {}
     }
 
-    // Request media stream non-blockingly for visualizer
     this.requestMicrophoneAccess().catch(() => {});
   }
 
   stopListening() {
     this.isContinuous = false;
-    if (this.recognition && this.isListening) {
+    this.isListening = false;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+    if (this.recognition) {
       try {
         this.recognition.stop();
       } catch (e) {}
     }
-    this.isListening = false;
     this.onStateChange({ listening: false });
   }
 
   toggleListening(continuous = false) {
     if (this.isListening) {
+      // If user clicks stop, commit whatever was accumulated immediately
+      if (this.accumulatedTranscript.trim()) {
+        this.commitTranscript();
+      }
       this.stopListening();
     } else {
       this.startListening(continuous);

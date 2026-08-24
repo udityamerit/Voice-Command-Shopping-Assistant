@@ -486,6 +486,14 @@ app.post("/api/voice/process", async (req, res) => {
         actionsTaken.push(`Executed UI action: ${nlpResult.uiAction.type}`);
         uiAction = nlpResult.uiAction;
       }
+    } else if (intent === "PRODUCT_INFO") {
+      const p = nlpResult.product || findCatalogProduct(transcript);
+      if (p) {
+        searchResults = [p];
+        actionsTaken.push(`Retrieved details for ${p.name}`);
+        if (!uiAction) uiAction = { type: "SEARCH_STORE", payload: p.name };
+      }
+      finalSpokenFeedback = nlpResult.spokenFeedback;
     } else if (intent === "SEARCH") {
       const p = nlpResult.searchParams || {};
       searchResults = searchCatalog({
@@ -496,7 +504,9 @@ app.post("/api/voice/process", async (req, res) => {
         dietary: p.dietary
       });
       actionsTaken.push(`Found ${searchResults.length} matching products`);
-      if (searchResults.length > 0) {
+      if (nlpResult.spokenFeedback && !nlpResult.spokenFeedback.startsWith("Searching for items matching")) {
+        finalSpokenFeedback = nlpResult.spokenFeedback;
+      } else if (searchResults.length > 0) {
         finalSpokenFeedback = `Found ${searchResults.length} items matching '${p.query || transcript}'.`;
       } else {
         finalSpokenFeedback = `No items found matching '${p.query || transcript}'. Try searching for produce, milk, bakery, or snacks.`;
