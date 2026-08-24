@@ -90,12 +90,12 @@ class VoiceShoppingApp {
         this.stopAssistantSpeaking();
       },
       onTranscript: ({ interim, final }) => {
-        const transcriptText = document.getElementById("liveUserTranscript");
+        const userTextInput = document.getElementById("liveUserTextInput");
         const hudUserText = document.getElementById("hudUserText");
 
-        const display = final || interim || "Listening... Speak your grocery command";
-        if (transcriptText) transcriptText.textContent = `"${display}"`;
-        if (hudUserText) hudUserText.textContent = `"${display}"`;
+        const display = final || interim;
+        if (userTextInput && display) userTextInput.value = display;
+        if (hudUserText && display) hudUserText.textContent = `"${display}"`;
 
         if (final && final.trim() !== "") {
           this.handleVoiceCommand(final.trim());
@@ -106,7 +106,7 @@ class VoiceShoppingApp {
         const searchMic = document.getElementById("searchBarMicBtn");
         const hudOrb = document.getElementById("hudMicBtn");
         const hudStatus = document.getElementById("hudStatus");
-        const transcriptText = document.getElementById("liveUserTranscript");
+        const userTextInput = document.getElementById("liveUserTextInput");
         const heroMicIcon = document.getElementById("heroMicIcon");
 
         if (listening) {
@@ -116,8 +116,8 @@ class VoiceShoppingApp {
           hudOrb?.classList.add("listening");
           if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone-lines";
           if (hudStatus) hudStatus.textContent = "Listening... Speak your grocery command";
-          if (transcriptText && transcriptText.textContent.includes("Ready")) {
-            transcriptText.textContent = '"Listening... Speak now (e.g. Add 2 apples and milk)"';
+          if (userTextInput && !userTextInput.value) {
+            userTextInput.placeholder = "Listening... Speak your command now...";
           }
           this.visualizer.start("listening");
         } else {
@@ -126,6 +126,9 @@ class VoiceShoppingApp {
           hudOrb?.classList.remove("listening");
           if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone";
           if (hudStatus) hudStatus.textContent = "Listening continuously... Speak your grocery commands";
+          if (userTextInput) {
+            userTextInput.placeholder = 'Type or speak command... (e.g. "Add 2 oat milks", "What is in my cart?")';
+          }
           this.visualizer.stop();
         }
 
@@ -140,6 +143,27 @@ class VoiceShoppingApp {
   }
 
   initEventListeners() {
+    // Inline YOU form submission (Type & Press Enter or Click Arrow)
+    document.getElementById("userTextForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("liveUserTextInput");
+      const text = input?.value.trim();
+      if (text) {
+        this.stopAssistantSpeaking();
+        this.handleVoiceCommand(text);
+      }
+    });
+
+    document.getElementById("sendUserTextBtn")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("liveUserTextInput");
+      const text = input?.value.trim();
+      if (text) {
+        this.stopAssistantSpeaking();
+        this.handleVoiceCommand(text);
+      }
+    });
+
     // Hero Mic button
     document.getElementById("heroMainMicBtn")?.addEventListener("click", () => {
       this.stopAssistantSpeaking();
@@ -183,17 +207,6 @@ class VoiceShoppingApp {
       UI.showToast(`Voice persona: ${e.target.options[e.target.selectedIndex].text}`, "info", "fa-microphone");
     });
 
-    // Click on User Transcript bubble to type command directly
-    document.querySelector(".bubble-user")?.addEventListener("click", () => {
-      this.stopAssistantSpeaking();
-      const text = window.prompt("Type your voice command directly:", "Add 2 bottles of oat milk and 1 loaf of sourdough bread");
-      if (text && text.trim()) {
-        const transcriptText = document.getElementById("liveUserTranscript");
-        if (transcriptText) transcriptText.textContent = `"${text.trim()}"`;
-        this.handleVoiceCommand(text.trim());
-      }
-    });
-
     // Replay Audio button
     document.getElementById("replayAudioBtn")?.addEventListener("click", () => {
       this.playAssistantAudio(this.lastAudioDataUrl);
@@ -213,8 +226,8 @@ class VoiceShoppingApp {
           const cmd = chip.getAttribute("data-cmd");
           if (cmd) {
             this.stopAssistantSpeaking();
-            const transcriptText = document.getElementById("liveUserTranscript");
-            if (transcriptText) transcriptText.textContent = `"${cmd}"`;
+            const userTextInput = document.getElementById("liveUserTextInput");
+            if (userTextInput) userTextInput.value = cmd;
             this.handleVoiceCommand(cmd);
           }
         }
@@ -227,8 +240,8 @@ class VoiceShoppingApp {
         const cmd = e.currentTarget.getAttribute("data-cmd");
         if (cmd) {
           this.stopAssistantSpeaking();
-          const transcriptText = document.getElementById("liveUserTranscript");
-          if (transcriptText) transcriptText.textContent = `"${cmd}"`;
+          const userTextInput = document.getElementById("liveUserTextInput");
+          if (userTextInput) userTextInput.value = cmd;
           this.handleVoiceCommand(cmd);
         }
       });

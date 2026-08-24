@@ -687,22 +687,82 @@ body {
 
 .bubble-user, .bubble-ai {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.65rem;
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   line-height: 1.4;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .bubble-user {
   background: rgba(56, 189, 248, 0.08);
   border-left: 3px solid #38bdf8;
-  cursor: pointer;
   transition: all var(--transition-fast);
 }
-.bubble-user:hover {
-  background: rgba(56, 189, 248, 0.16);
+.bubble-user:focus-within {
+  background: rgba(56, 189, 248, 0.14);
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+}
+
+.user-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.user-command-inline-input {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-full);
+  padding: 0.38rem 0.85rem;
+  font-size: 0.84rem;
+  color: #f0fdf4;
+  outline: none;
+  transition: all var(--transition-fast);
+  min-width: 0;
+}
+
+.user-command-inline-input:focus {
+  border-color: #38bdf8;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.user-command-inline-input::placeholder {
+  color: #7dd3fc;
+  opacity: 0.65;
+  font-style: italic;
+  font-size: 0.8rem;
+}
+
+.btn-inline-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  color: #ffffff;
+  font-size: 0.8rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.4);
+}
+
+.btn-inline-send:hover {
+  transform: scale(1.08);
+  background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
 }
 
 .bubble-ai {
@@ -720,7 +780,6 @@ body {
 .bubble-tag.user { color: #38bdf8; }
 .bubble-tag.ai { color: #34d399; }
 
-.bubble-user p { color: #e0f2fe; font-style: italic; }
 .bubble-ai p { color: #f0fdf4; font-weight: 500; }
 
 /* Chips Row */

@@ -166,13 +166,25 @@
           </div>
 
           <div class="hub-dialogue-bubbles">
-            <div class="bubble-user">
+            <div class="bubble-user" id="userBubbleContainer">
               <span class="bubble-tag user"><i class="fa-solid fa-user"></i> You</span>
-              <p id="liveUserTranscript">"Ready for your voice command..."</p>
+              <form id="userTextForm" class="user-inline-form" onsubmit="return false;">
+                <input 
+                  type="text" 
+                  id="liveUserTextInput" 
+                  class="user-command-inline-input" 
+                  placeholder='Type or speak command... (e.g. "Add 2 oat milks", "What is in my cart?")'
+                  value=""
+                  autocomplete="off"
+                />
+                <button type="submit" id="sendUserTextBtn" class="btn-inline-send" title="Send Command (or press Enter)">
+                  <i class="fa-solid fa-arrow-up"></i>
+                </button>
+              </form>
             </div>
             <div class="bubble-ai">
               <span class="bubble-tag ai"><i class="fa-solid fa-sparkles"></i> VoiceCart AI</span>
-              <p id="assistantResponseText">"Welcome! Speak any grocery command like 'Add 2 bottles of oat milk' or 'Find snacks under $5'."</p>
+              <p id="assistantResponseText">"Welcome! Speak or type any grocery command like 'Add 2 bottles of oat milk' or 'Find snacks under $5'."</p>
             </div>
           </div>
         </div>

@@ -162,11 +162,22 @@ export function findCatalogProduct(queryStr) {
   const raw = queryStr.toLowerCase().trim();
   if (raw === "") return null;
 
+  // Disallow non-item queries from matching products
+  const INVALID_ITEM_WORDS = [
+    "cart", "the cart", "my cart", "this cart", "shopping cart", "shopping list", 
+    "list", "my list", "the list", "order", "my order", "checkout", "everything", 
+    "nothing", "something", "items", "products", "product", "item", 
+    "what is in the cart", "what is in my cart", "what is in cart"
+  ];
+  if (INVALID_ITEM_WORDS.includes(raw)) return null;
+
   // Clean noise words
   const clean = raw
     .replace(/^(a|an|the|some|fresh|organic|pack of|bottle of|box of|loaf of|bunch of|bag of|dozen)\s+/gi, "")
     .replace(/\s+(please|now|fast|today)$/gi, "")
     .trim();
+
+  if (INVALID_ITEM_WORDS.includes(clean)) return null;
 
   // 1. Direct ID match
   const byId = PRODUCT_CATALOG.find(p => p.id.toLowerCase() === raw || p.id.toLowerCase() === clean);

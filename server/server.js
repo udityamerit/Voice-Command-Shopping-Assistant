@@ -379,13 +379,22 @@ app.post("/api/voice/process", async (req, res) => {
       finalSpokenFeedback = "Here are your personalized restock and seasonal recommendations.";
     } else if (intent === "SHOW_CART") {
       if (shoppingList.length === 0) {
-        finalSpokenFeedback = "Your cart is currently empty. You can say 'Add milk and sourdough bread' to get started.";
+        finalSpokenFeedback = "Your cart is currently empty. You can say 'Add 2 gala apples and milk' to get started.";
         actionsTaken.push("Checked cart status: empty");
       } else {
-        const total = shoppingList.reduce((s, i) => s + (i.price * i.quantity), 0).toFixed(2);
+        const totalCost = shoppingList.reduce((s, i) => s + (i.price * i.quantity), 0).toFixed(2);
+        const totalUnits = shoppingList.reduce((s, i) => s + i.quantity, 0);
         const itemSummaries = shoppingList.map(i => `${i.quantity}x ${i.name}`).join(", ");
-        finalSpokenFeedback = `You have ${shoppingList.length} items in your cart: ${itemSummaries}, totaling $${total}.`;
-        actionsTaken.push(`Checked cart status: ${shoppingList.length} items, $${total}`);
+        
+        const lowerTrans = (transcript || "").toLowerCase();
+        if (lowerTrans.includes("cost") || lowerTrans.includes("price") || lowerTrans.includes("how much")) {
+          finalSpokenFeedback = `The total cost of the ${totalUnits} items in your cart is $${totalCost} (${itemSummaries}).`;
+        } else if (lowerTrans.includes("how many") || lowerTrans.includes("quantity") || lowerTrans.includes("quantities")) {
+          finalSpokenFeedback = `You have ${totalUnits} total items (${shoppingList.length} unique products) in your cart: ${itemSummaries}, totaling $${totalCost}.`;
+        } else {
+          finalSpokenFeedback = `You have ${totalUnits} items in your cart: ${itemSummaries}, totaling $${totalCost}.`;
+        }
+        actionsTaken.push(`Checked cart status: ${totalUnits} items, $${totalCost}`);
       }
     } else if (intent === "CHECKOUT") {
       if (shoppingList.length === 0) {
