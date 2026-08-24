@@ -59,39 +59,52 @@ export function getSeasonalAndSaleRecommendations() {
  * Intelligent Substitutions: Finds healthy, dietary, or budget alternatives.
  */
 export function getProductSubstitutes(productIdOrName) {
+  if (!productIdOrName || typeof productIdOrName !== "string") {
+    return { target: null, substitutes: [] };
+  }
+
   let targetProduct = PRODUCT_CATALOG.find(p => p.id === productIdOrName);
   if (!targetProduct) {
-    const q = productIdOrName.toLowerCase();
-    targetProduct = PRODUCT_CATALOG.find(p => p.name.toLowerCase().includes(q));
+    targetProduct = findCatalogProduct(productIdOrName);
   }
 
   if (!targetProduct) {
     return { target: null, substitutes: [] };
   }
 
-  const substitutes = (targetProduct.substitutes || [])
-    .map(subId => {
-      const subProduct = PRODUCT_CATALOG.find(p => p.id === subId);
-      if (!subProduct) return null;
-
-      // Determine smart reasoning
-      let reason = "Alternative option";
-      if (subProduct.dietary.some(d => d.includes("Vegan") || d.includes("Plant-Based"))) {
-        reason = "Plant-based / Vegan friendly alternative";
-      } else if (subProduct.dietary.some(d => d.includes("Gluten-Free"))) {
-        reason = "Certified gluten-free alternative";
-      } else if (subProduct.price < targetProduct.price) {
-        reason = `Budget-friendly option (Save $${(targetProduct.price - subProduct.price).toFixed(2)})`;
-      } else if (subProduct.dietary.some(d => d.includes("Organic"))) {
-        reason = "Premium organic alternative";
-      }
-
-      return {
-        product: subProduct,
-        reason
-      };
-    })
+  // 1. Direct explicit substitutes from catalog definition
+  let subProducts = (targetProduct.substitutes || [])
+    .map(subId => PRODUCT_CATALOG.find(p => p.id === subId))
     .filter(Boolean);
+
+  // 2. Dynamic fallback: if no explicit substitutes, find same-category alternatives
+  if (subProducts.length === 0) {
+    subProducts = PRODUCT_CATALOG.filter(p =>
+      p.id !== targetProduct.id &&
+      (p.category === targetProduct.category ||
+       p.dietary.some(d => targetProduct.dietary.includes(d)))
+    ).slice(0, 3);
+  }
+
+  const substitutes = subProducts.map(subProduct => {
+    let reason = "Alternative option";
+    if (subProduct.dietary.some(d => d.includes("Vegan") || d.includes("Plant-Based"))) {
+      reason = "Plant-based / Vegan friendly alternative";
+    } else if (subProduct.dietary.some(d => d.includes("Gluten-Free"))) {
+      reason = "Certified gluten-free alternative";
+    } else if (subProduct.price < targetProduct.price) {
+      reason = `Budget-friendly option (Save $${(targetProduct.price - subProduct.price).toFixed(2)})`;
+    } else if (subProduct.dietary.some(d => d.includes("Organic"))) {
+      reason = "Premium organic alternative";
+    }
+
+    return {
+      product: subProduct,
+      name: subProduct.name,
+      price: subProduct.price,
+      reason
+    };
+  });
 
   return {
     target: targetProduct,

@@ -409,19 +409,105 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
     };
   }
 
-  // ── 14. STORE INVENTORY / CATALOG INQUIRY ────────────────────────────────
+  // ── 14. COMPREHENSIVE STORE & CATEGORY INVENTORY INQUIRIES ───────────────
+  // A) Category List Inquiry: "what are the categories", "what categories do you have", "show categories"
+  if (/\b(what\s+(are\s+the\s+|are\s+all\s+the\s+)?categories|what\s+categories\s+(are\s+there|do\s+you\s+have|can\s+i\s+browse)|list\s+(all\s+)?categories|show\s+(all\s+)?categories|what\s+sections\s+(are\s+there|do\s+you\s+have))\b/i.test(lower)) {
+    return {
+      intent: "NAVIGATE_CATEGORY",
+      detectedLanguage: "en",
+      spokenFeedback: "We offer 8 fresh grocery categories: Produce (Fruits & Veggies), Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, and Household essentials. Which one would you like to explore?",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "categoryRail" },
+      items: []
+    };
+  }
+
+  // B) Specific Category Items Inquiry: "what items in produce", "what items do you have in bakery", "what drinks do you sell"
+  const isInventoryQuery = (
+    /\b(what|which|show|list|tell\s+me|any|do\s+you\s+(have|sell|carry))\b/i.test(lower) &&
+    /\b(items?|products?|food|options?|do\s+you\s+(have|sell|carry)|is\s+there|are\s+there|available|sell|carry|in|under)\b/i.test(lower)
+  ) || /\b(what\s+(fruits?|vegetables?|veggies?|breads?|drinks?|snacks?|dairy|meats?))\b/i.test(lower);
+
+  const CATEGORY_ITEMS_KNOWLEDGE = [
+    {
+      match: /\b(produce|vegetables?|fruits?|veggies?|greens?)\b/i,
+      category: "Produce",
+      spoken: "In Produce, we have Organic Gala Apples ($3.99), Honeycrisp Apples ($4.99), Fair-Trade Bananas ($1.89), Baby Spinach ($2.99), Hass Avocados ($4.49), and Organic Strawberries ($4.29)."
+    },
+    {
+      match: /\b(dairy|eggs?|milk|cheese|butter|yogurt)\b/i,
+      category: "Dairy & Eggs",
+      spoken: "In Dairy & Eggs, we have Whole Grade A Milk ($3.89), Oat Milk Barista ($4.29), Pure Irish Butter ($4.49), Aged Cheddar ($4.99), Greek Yogurt ($3.79), and Free-Range Brown Eggs ($4.69)."
+    },
+    {
+      match: /\b(bakery|breads?|buns?|croissants?|bagels?)\b/i,
+      category: "Bakery",
+      spoken: "In Bakery, we have Artisan Sourdough Boule ($4.29), Brioche Burger Buns ($3.79), All-Butter Croissants ($4.99), and New York Everything Bagels ($3.99)."
+    },
+    {
+      match: /\b(pantry|atta|rice|oils?|flour|honey|grains?)\b/i,
+      category: "Pantry",
+      spoken: "In Pantry, we have Extra Virgin Olive Oil ($8.99), Organic Basmati Rice ($5.49), Whole Wheat Chakki Atta ($4.99), and Raw Organic Honey ($6.49)."
+    },
+    {
+      match: /\b(meat|seafood|fish|chicken|salmon|tofu)\b/i,
+      category: "Meat & Seafood",
+      spoken: "In Meat & Seafood, we have Organic Boneless Chicken Breasts ($7.99), Wild Atlantic Salmon ($9.99), and Organic Extra Firm Tofu ($2.99)."
+    },
+    {
+      match: /\b(beverages?|drinks?|juices?|coffee|soda|water)\b/i,
+      category: "Beverages",
+      spoken: "In Beverages, we have Nitro Cold Brew Coffee ($4.49), Fresh Squeezed Orange Juice ($3.99), and Sparkling Mineral Water ($2.49)."
+    },
+    {
+      match: /\b(snacks?|munchies|chips|chocolates?|nuts|almonds)\b/i,
+      category: "Snacks",
+      spoken: "In Snacks, we have 70% Dark Chocolate Almonds ($4.99), Sea Salt Kettle Potato Chips ($3.49), and Roasted Almonds & Cashews ($5.99)."
+    },
+    {
+      match: /\b(household|cleaning|soap|toothpaste|detergent)\b/i,
+      category: "Household",
+      spoken: "In Household, we have Plant-Based Dish Soap ($3.99) and Wild Peppermint Natural Toothpaste ($4.49)."
+    }
+  ];
+
+  if (isInventoryQuery && !startsWithAction) {
+    for (const catKnowledge of CATEGORY_ITEMS_KNOWLEDGE) {
+      if (catKnowledge.match.test(lower)) {
+        return {
+          intent: "NAVIGATE_CATEGORY",
+          detectedLanguage: "en",
+          spokenFeedback: catKnowledge.spoken,
+          uiAction: { type: "SET_CATEGORY", payload: catKnowledge.category, scrollTarget: "productsSection" },
+          items: []
+        };
+      }
+    }
+  }
+
+  // C) Sale / Deals Inquiry: "what is on sale", "what deals do you have", "show sales"
+  if (/\b(what('s|\s+is|\s+items\s+are)\s+on\s+sale|what\s+deals?\s+(do\s+you\s+have|are\s+there)|what\s+specials?\s+(do\s+you\s+have|are\s+there)|show\s+(me\s+)?(deals?|discounts?|sales?))\b/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "Currently on sale: Baby Spinach is 20% off at $2.99, Organic Gala Apples are 15% off at $3.99, and Free-Range Brown Eggs are 15% off at $4.69!",
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "dealsPane" },
+      items: []
+    };
+  }
+
+  // D) Overall Store Catalog Inquiry: "what items do you have", "what products are in the store", "what do you sell"
   if (
-    /\bwhat\s+(do\s+you\s+(have|sell|carry|offer)|items?\s+(do\s+you\s+have|are\s+available))\b/.test(lower) ||
-    /\b(in\s+(the|our|your)\s+(store|shop|market|catalog|inventory))\b/.test(lower) ||
-    /\ball\s+(the\s+)?(quantities|items|products)\s+in\s+(the\s+|your\s+|our\s+)?store\b/.test(lower)
+    /\bwhat\s+(items?|products?|groceries|do\s+you\s+(have|sell|carry|offer))\s+(are\s+there|in\s+(the|our|your)\s+(store|shop|market|catalog|inventory|website|app)|on\s+(this\s+|the\s+)?(website|store|app))\b/i.test(lower) ||
+    /\ball\s+(the\s+)?(quantities|items|products)\s+in\s+(the\s+|your\s+|our\s+)?store\b/i.test(lower)
   ) {
     if (!startsWithAction) {
       return {
         intent: "SEARCH",
         detectedLanguage: "en",
-        spokenFeedback: "Our store has 24 fresh grocery items across 8 categories: Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, and Household essentials.",
+        spokenFeedback: "Our store has 24 fresh grocery items across 8 categories: Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, and Household essentials with 10-minute delivery.",
         items: [],
-        searchParams: { query: "", category: "All" }
+        searchParams: { query: "", category: "All" },
+        uiAction: { type: "RESET_FILTERS", scrollTarget: "productsSection" }
       };
     }
   }
@@ -429,6 +515,7 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
   // ── 15. GET_RECOMMENDATIONS Intent ───────────────────────────────────────
   if (
     /^(what\s+should\s+i\s+(buy|get|add)|what\s+do\s+i\s+need|what\s+do\s+you\s+recommend(\s+for\s+restock)?|recommendations?|what\s+are\s+(my\s+|the\s+)?recommendations?|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items?|specials?|fruits?)|suggestions?|suggest\s+something|what('s|\s+is)\s+on\s+sale)$/i.test(lower) ||
+    /\bwhat\s+(is\s+)?(inside\s+)?(in\s+)?(my\s+|the\s+)?recommend(ed)?\b/i.test(lower) ||
     /\bwhat\s+(do\s+you\s+)?recommend\b/i.test(lower)
   ) {
     return {
@@ -708,10 +795,6 @@ async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pa
     return fastResult;
   }
 
-  // Complex/multilingual/conversational → MiniMax-M3 LLM with full website awareness & memory
-  console.log(`[NLU LLM Call] "${transcript}" (session: ${sessionId}) — deferring to MiniMax-M3 with live context & dialogue memory`);
-  const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} ($${p.price.toFixed(2)}, ${p.category})`).join(", ");
-
   // Build live website context description
   let websiteContextSnippet = "Website Live State:\n";
   if (pageContext) {
@@ -739,12 +822,24 @@ async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pa
     memoryContextSnippet += `\nLast recommended items: ${memoryContext.lastRecommendedItems.join(', ')}.`;
   }
 
+  const categorizedCatalog = `
+Category Breakdown of all 24 items in the store:
+1. Produce (Fresh Fruits & Vegetables): Organic Gala Apples ($3.99, 15% off), Honeycrisp Apples ($4.99), Fair-Trade Organic Bananas ($1.89), Baby Spinach ($2.99, 20% off), Hass Avocados 3-Pack ($4.49), Organic Strawberries ($4.29)
+2. Dairy & Eggs: Whole Grade A Milk ($3.89), Oat Milk Barista ($4.29), Pure Irish Butter ($4.49), Aged Cheddar Cheese ($4.99), Greek Whole Milk Yogurt ($3.79), Free-Range Pasture Brown Eggs ($4.69, 15% off)
+3. Bakery: Artisan Sourdough Boule ($4.29, 10% off), Brioche Burger Buns ($3.79), All-Butter French Croissants ($4.99), NY Everything Bagels ($3.99)
+4. Pantry: Extra Virgin Olive Oil ($8.99), Organic Basmati Rice ($5.49), Whole Wheat Chakki Atta ($4.99), Raw Organic Honey ($6.49)
+5. Meat & Seafood: Organic Boneless Chicken Breasts ($7.99), Wild Atlantic Salmon ($9.99), Organic Extra Firm Tofu ($2.99)
+6. Beverages: Nitro Cold Brew Coffee ($4.49), Fresh Squeezed Orange Juice ($3.99), Sparkling Mineral Water ($2.49)
+7. Snacks: 70% Dark Chocolate Almonds ($4.99), Sea Salt Kettle Potato Chips ($3.49), Roasted Almonds & Cashews ($5.99)
+8. Household: Plant-Based Dish Soap ($3.99), Wild Peppermint Natural Toothpaste ($4.49)
+All groceries are delivered fresh in 10 minutes.`;
+
   const systemPrompt = `You are VoiceCart AI, the intelligent voice assistant controlling the entire 10-minute grocery delivery website.
 You have full conversational memory of previous turns. Use it to resolve pronouns ("it", "those", "that", "them"), follow-up commands ("actually make it 3", "remove it", "add those"), and context.
 You have full access to scan and control every part of the website: product catalog, shopping cart, categories, dietary filters, price slider, dark/light theme, hands-free mode, and sidebar tabs.
 
 ${websiteContextSnippet}${memoryContextSnippet}
-Store Catalog: ${catalogProductNames}
+${categorizedCatalog}
 
 Valid intents:
 - "ADD": Add product(s) to shopping cart.
@@ -765,12 +860,12 @@ Valid intents:
 - "SCROLL_VIEW": Scroll page to (rfySection, productsSection, top).
 - "GET_SUBSTITUTE": Find healthy/dietary replacements for an item.
 - "GET_RECOMMENDATIONS": Show predictive restock or seasonal deals.
-- "CHAT": Answer questions about the store, website view, visible items, delivery time, or cart.
+- "CHAT": Answer questions about the store, website view, categories, visible items, delivery time, or cart.
 
 Respond ONLY with strict JSON (no markdown fences, no explanatory text outside JSON).
 Format:
 {
-  "intent": "ADD" | "NAVIGATE_CATEGORY" | "APPLY_FILTER" | "SET_PRICE_FILTER" | "RESET_FILTERS" | "TOGGLE_THEME" | "SHOW_CART" | "SEARCH" | "CHAT" | ...,
+  "intent": "ADD" | "NAVIGATE_CATEGORY" | "APPLY_FILTER" | "SET_PRICE_FILTER" | "RESET_FILTERS" | "TOGGLE_THEME" | "SHOW_CART" | "SEARCH" | "CHAT",
   "detectedLanguage": "en",
   "spokenFeedback": "Natural, clear, concise voice response spoken back to user.",
   "items": [{"name": "item name", "quantity": 1, "category": "Produce"}],

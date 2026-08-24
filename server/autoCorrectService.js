@@ -205,7 +205,12 @@ const PROTECTED_WORDS = new Set([
   "and", "the", "for", "to", "in", "on", "at", "by", "with", "from", "of",
   "now", "my", "me", "you", "it", "those", "that", "them", "this", "all",
   "are", "have", "can", "what", "how", "under", "new", "not", "any", "some",
-  "like", "then", "also", "out", "off", "up", "down", "is", "a", "an", "do", "i"
+  "like", "then", "also", "out", "off", "up", "down", "is", "a", "an", "do", "i",
+  "there", "here", "where", "which", "why", "who", "when", "about", "sell", "tell",
+  "dairy", "breads", "bread", "fruits", "fruit", "vegetables", "vegetable", "veggies",
+  "drinks", "drink", "juices", "juice", "meats", "meat", "munchies", "cleaning",
+  "sale", "sales", "deal", "deals", "discount", "discounts", "special", "specials",
+  "items", "item", "store", "website", "app", "cart", "order", "orders", "fresh"
 ]);
 
 // ── 3. Build Vocabulary from Catalog & Actions ────────────────────────────
@@ -219,8 +224,9 @@ const VOCABULARY = new Set([
   "filter", "reset", "toggle", "scroll", "cart", "drawer", "handsfree", "theme",
   "organic", "vegan", "gluten-free", "keto",
 
-  // Categories
+  // Categories and individual words
   ...CATEGORIES.map(c => c.toLowerCase()),
+  ...CATEGORIES.flatMap(c => c.toLowerCase().split(/[\s&]+/)).filter(Boolean),
 
   // Products and tokens
   ...PRODUCT_CATALOG.flatMap(p => [

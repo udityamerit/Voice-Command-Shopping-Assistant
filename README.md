@@ -36,18 +36,21 @@ flowchart TD
 
 | Requirement Category | Specified in PDF | Implementation in VoiceCart AI | Status |
 | :--- | :--- | :--- | :---: |
-| **1. Voice Command Recognition** | Add items using voice commands ("Add milk", "I need apples") | Continuous and single-shot Web Speech API with microphone waveform visualization | ✅ **Completed** |
-| **1. Natural Language Processing** | Understand varied user phrases ("I want bananas" vs "Add bananas") | **MiniMax-M3 LLM** zero-shot multi-intent parser with entity extraction | ✅ **Completed** |
+| **1. Voice Command Recognition** | Add items using voice commands ("Add milk", "I need apples") | Continuous & single-shot Web Speech API with live microphone waveform visualizer | ✅ **Completed** |
+| **1. Natural Language Processing** | Understand varied user phrases ("I want bananas" vs "Add bananas") | **MiniMax-M3 LLM** zero-shot multi-intent parser with entity extraction & chunking | ✅ **Completed** |
+| **1. Speech Autocorrection** | Fix speech-to-text misspellings and phonetic errors | Multi-stage **Soundex + Levenshtein Autocorrection Engine** with catalog dictionary | ✅ **Completed** |
+| **1. Conversation Memory** | Remember previous context and follow-up commands | Stateful **Sliding-Window Dialogue History** (*"make it 4"*, *"remove it"*, *"add those"*) | ✅ **Completed** |
+| **1. Live Website Control** | Scan and control all DOM elements via voice | Bidirectional **PageScanner** for categories, filters, price slider, theme, and tabs | ✅ **Completed** |
 | **1. Multilingual Support** | Voice commands in multiple languages | Supports English, Spanish, French, German, Hindi, Mandarin, Japanese | ✅ **Completed** |
-| **2. Product Recommendations** | Suggest items user is low on based on history | Predictive Replenishment algorithm using purchase frequency cycles | ✅ **Completed** |
-| **2. Seasonal Recommendations** | Suggest items in season or on sale | Seasonal & promotional curator with discount badges | ✅ **Completed** |
+| **2. Product Recommendations** | Suggest items user is low on based on history | Predictive Replenishment **"Recommended For You" Restock Carousel** | ✅ **Completed** |
+| **2. Seasonal Recommendations** | Suggest items in season or on sale | Seasonal & promotional curator with real-time discount percentage badges | ✅ **Completed** |
 | **2. Substitutes** | Offer alternatives if unavailable or dietary preferred | Intelligent substitution engine for Plant-based, Gluten-Free, Organic, Budget | ✅ **Completed** |
 | **3. Add/Remove Items** | Add, remove, or modify items via voice | Voice commands for ADD, REMOVE, MODIFY_QTY, and CLEAR | ✅ **Completed** |
 | **3. Categorize Items** | Automatically categorize items (dairy, produce, snacks) | Automatic 8-category AI classification (Produce, Dairy, Bakery, Pantry, etc.) | ✅ **Completed** |
 | **3. Quantity Management** | Specify quantities using voice ("Add 2 bottles of water") | Unit and numeric quantity extraction with +/- stepper controls | ✅ **Completed** |
 | **4. Voice-Activated Search** | Search by brand, size, price range ("Find organic apples") | Multi-parameter search matching keywords, brand, dietary tags | ✅ **Completed** |
 | **4. Price Range Filtering** | Voice filter for price bounds ("Find toothpaste under $5") | Spoken price boundary parser & interactive price range slider | ✅ **Completed** |
-| **11. UI/UX Excellence** | Minimalist, visual feedback, mobile & voice-only HUD | Glassmorphism, live audio visualizer, dark/light mode, Hands-Free HUD | ✅ **Completed** |
+| **11. UI/UX Excellence** | Minimalist, visual feedback, mobile & voice-only HUD | Glassmorphism, live audio visualizer, dark/light mode, Hands-Free Kitchen HUD | ✅ **Completed** |
 | **12. Production & Hosting** | Clean code, error handling, Docker & cloud deployment configs | Unit/integration test suite, `Dockerfile`, `render.yaml`, `vercel.json` | ✅ **Completed** |
 
 ---

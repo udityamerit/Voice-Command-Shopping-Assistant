@@ -506,7 +506,8 @@ app.post("/api/voice/process", async (req, res) => {
       substituteData = getProductSubstitutes(target);
       actionsTaken.push(`Found ${substituteData.substitutes.length} substitutes for ${substituteData.target?.name || target}`);
       if (substituteData.substitutes.length > 0) {
-        finalSpokenFeedback = `Here are ${substituteData.substitutes.length} substitutes for ${substituteData.target?.name || target}: ${substituteData.substitutes.map(s => s.name).slice(0, 2).join(" and ")}.`;
+        const subNames = substituteData.substitutes.map(s => `${s.product?.name || s.name} ($${(s.product?.price || s.price || 0).toFixed(2)})`).slice(0, 2).join(" or ");
+        finalSpokenFeedback = `For ${substituteData.target?.name || target}, a great alternative is ${subNames}.`;
       } else {
         finalSpokenFeedback = `I couldn't find direct substitutes for '${target}'. Explore our catalogue for similar items.`;
       }
