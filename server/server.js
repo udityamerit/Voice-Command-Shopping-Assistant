@@ -376,23 +376,24 @@ async function executeSingleIntent(nlpResult, shoppingList, originalTranscript) 
 // Voice Command AI Endpoint (MiniMax-M3 LLM + Neural TTS)
 // -------------------------------------------------------------
 app.post("/api/voice/process", async (req, res) => {
-  const { transcript, language = "en", voiceId = "English_radiant_girl" } = req.body;
+  const { transcript, language = "en", voiceId = "English_radiant_girl", pageContext = null } = req.body;
 
   if (!transcript || transcript.trim() === "") {
     return res.status(400).json({ error: "Voice transcript is required" });
   }
 
   try {
-    // 1. Parse NLP Intent using MiniMax-M3 LLM (with normalization + chunking)
-    const nlpResult = await parseVoiceCommandWithMiniMax(transcript, shoppingList);
+    // 1. Parse NLP Intent using MiniMax-M3 LLM (with normalization + chunking + live website DOM awareness)
+    const nlpResult = await parseVoiceCommandWithMiniMax(transcript, shoppingList, pageContext);
     console.log(`[Voice] Transcript: "${transcript}" → Intent: ${nlpResult.intent}`);
     const intent = nlpResult.intent || "CHAT";
     let actionsTaken = [];
     let searchResults = null;
     let substituteData = null;
     let recommendationData = null;
+    let uiAction = nlpResult.uiAction || null;
 
-    // 2. Execute List Mutations based on Intent
+    // 2. Execute List Mutations or UI Actions based on Intent
     let finalSpokenFeedback = nlpResult.spokenFeedback;
 
     // ── Handle multi-intent compound commands ────────────────────────────────
@@ -405,6 +406,7 @@ app.post("/api/voice/process", async (req, res) => {
         const { taken, feedback } = await executeSingleIntent(subResult, shoppingList, transcript);
         multiActionsTaken.push(...taken);
         if (feedback) multiFeedbacks.push(feedback);
+        if (subResult.uiAction && !uiAction) uiAction = subResult.uiAction;
       }
 
       actionsTaken = multiActionsTaken;
@@ -457,6 +459,26 @@ app.post("/api/voice/process", async (req, res) => {
       shoppingList = [];
       actionsTaken.push("Cleared all shopping list items");
       finalSpokenFeedback = "I've cleared all items from your cart.";
+    } else if (intent === "NAVIGATE_CATEGORY") {
+      const cat = nlpResult.uiAction?.payload || "All";
+      actionsTaken.push(`Navigated to ${cat} category`);
+      if (!uiAction) uiAction = { type: "SET_CATEGORY", payload: cat, scrollTarget: "productsSection" };
+    } else if (intent === "APPLY_FILTER") {
+      const diet = nlpResult.uiAction?.payload || "";
+      actionsTaken.push(`Applied ${diet || 'dietary'} filter`);
+      if (!uiAction) uiAction = { type: "SET_DIET_FILTER", payload: diet };
+    } else if (intent === "SET_PRICE_FILTER") {
+      const price = nlpResult.uiAction?.payload || 15;
+      actionsTaken.push(`Set price filter to $${price}`);
+      if (!uiAction) uiAction = { type: "SET_MAX_PRICE", payload: price };
+    } else if (intent === "RESET_FILTERS") {
+      actionsTaken.push("Reset all filters to default");
+      if (!uiAction) uiAction = { type: "RESET_FILTERS" };
+    } else if (intent === "UI_ACTION") {
+      if (nlpResult.uiAction) {
+        actionsTaken.push(`Executed UI action: ${nlpResult.uiAction.type}`);
+        uiAction = nlpResult.uiAction;
+      }
     } else if (intent === "SEARCH") {
       const p = nlpResult.searchParams || {};
       searchResults = searchCatalog({
@@ -486,8 +508,16 @@ app.post("/api/voice/process", async (req, res) => {
       const seasonal = getSeasonalAndSaleRecommendations();
       recommendationData = { replenishment, seasonal };
       actionsTaken.push("Fetched personalized recommendations");
-      finalSpokenFeedback = "Here are your personalized restock and seasonal recommendations.";
+
+      const topRecs = replenishment.slice(0, 3).map(r => r.product.name);
+      if (topRecs.length > 0) {
+        finalSpokenFeedback = `Based on your purchase cycles, you are running low on ${topRecs.join(", ")}. Check the Recommended section!`;
+      } else {
+        finalSpokenFeedback = "Here are your personalized restock and seasonal recommendations.";
+      }
+      if (!uiAction) uiAction = { type: "SET_WORKSPACE_TAB", payload: "restockPane" };
     } else if (intent === "SHOW_CART") {
+      if (!uiAction) uiAction = { type: "OPEN_CART_DRAWER" };
       if (shoppingList.length === 0) {
         finalSpokenFeedback = "Your cart is currently empty. You can say 'Add 2 gala apples and milk' to get started.";
         actionsTaken.push("Checked cart status: empty");
@@ -507,6 +537,7 @@ app.post("/api/voice/process", async (req, res) => {
         actionsTaken.push(`Checked cart status: ${totalUnits} items, $${totalCost}`);
       }
     } else if (intent === "CHECKOUT") {
+      if (!uiAction) uiAction = { type: "OPEN_CART_DRAWER" };
       if (shoppingList.length === 0) {
         finalSpokenFeedback = "Your cart is empty! Please add items before checking out.";
         actionsTaken.push("Checkout attempted with empty cart");
@@ -529,6 +560,7 @@ app.post("/api/voice/process", async (req, res) => {
       transcript,
       nlp: nlpResult,
       intent,
+      uiAction,
       spokenFeedback: speechText,
       audioDataUrl: ttsResult?.audioDataUrl || null,
       actionsTaken,

@@ -3,6 +3,7 @@ import { ApiClient } from "./api.js";
 import { UI } from "./ui.js";
 import { VoiceHandler } from "./voiceHandler.js";
 import { AudioVisualizer } from "./visualizer.js";
+import { PageScanner } from "./pageScanner.js";
 
 class VoiceShoppingApp {
   constructor() {
@@ -51,9 +52,15 @@ class VoiceShoppingApp {
   toggleTheme() {
     const current = document.documentElement.getAttribute("data-theme") || "light";
     const next = current === "light" ? "dark" : "light";
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("voicecart_theme", next);
-    this.updateThemeIcon(next);
+    this.setTheme(next);
+  }
+
+  setTheme(targetTheme) {
+    const theme = targetTheme === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("voicecart_theme", theme);
+    this.updateThemeIcon(theme);
+    UI.showToast(`Switched to ${theme} theme`, "info", theme === "dark" ? "fa-moon" : "fa-sun");
   }
 
   initVisualizer() {
@@ -472,7 +479,11 @@ class VoiceShoppingApp {
     if (hudAiText) hudAiText.textContent = "Processing your command...";
 
     try {
-      const result = await ApiClient.processVoiceCommand(transcript, lang, persona);
+      // 1. Scan live website DOM and entire state
+      const pageContext = PageScanner.scan();
+
+      // 2. Process voice command with live website context
+      const result = await ApiClient.processVoiceCommand(transcript, lang, persona, pageContext);
 
       // Update Intent Badge
       if (aiBadge) aiBadge.textContent = result.intent;
@@ -496,10 +507,15 @@ class VoiceShoppingApp {
         result.actionsTaken.forEach(act => UI.showToast(act, "success", "fa-circle-check"));
       }
 
-      // Refresh list & catalog
+      // Refresh shopping list
       await this.refreshShoppingList();
 
-      // Handle specific UI actions per intent
+      // 3. Execute any dynamic UI Actions returned by the Voice Agent
+      if (result.uiAction) {
+        await this.executeUIAction(result.uiAction);
+      }
+
+      // Handle specific secondary intent UI states
       if (result.intent === "SHOW_CART") {
         this.openCartDrawer();
       } else if (result.intent === "CHECKOUT") {
@@ -529,6 +545,163 @@ class VoiceShoppingApp {
       UI.showToast(err.message, "error", "fa-triangle-exclamation");
     } finally {
       this.isProcessingCommand = false;
+    }
+  }
+
+  /**
+   * Executes dynamic UI actions across the entire website.
+   * Gives the Voice Agent full interactive control over the interface.
+   */
+  async executeUIAction(action) {
+    if (!action || !action.type) return;
+
+    switch (action.type) {
+      case "SET_CATEGORY": {
+        const targetCat = action.payload || "All";
+        const catPills = document.querySelectorAll(".cat-pill-item");
+        let matched = false;
+
+        catPills.forEach(pill => {
+          const cat = pill.getAttribute("data-category");
+          if (cat && cat.toLowerCase() === targetCat.toLowerCase()) {
+            catPills.forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            this.activeCategory = cat;
+            matched = true;
+          }
+        });
+
+        if (!matched && targetCat.toLowerCase() === "all") {
+          catPills[0]?.classList.add("active");
+          this.activeCategory = "All";
+        }
+
+        const heading = document.getElementById("currentCategoryHeading");
+        if (heading) heading.textContent = this.activeCategory === "All" ? "Fresh Groceries & Essentials" : this.activeCategory;
+        
+        await this.filterCatalog();
+
+        if (action.scrollTarget) {
+          this.scrollToSection(action.scrollTarget);
+        }
+        break;
+      }
+
+      case "SET_DIET_FILTER": {
+        const targetDiet = action.payload || "";
+        const chips = document.querySelectorAll("#dietaryFilterChips .diet-chip");
+        chips.forEach(chip => {
+          const diet = chip.getAttribute("data-diet") || "";
+          chip.classList.toggle("active", diet.toLowerCase() === targetDiet.toLowerCase());
+        });
+        await this.filterCatalog();
+        break;
+      }
+
+      case "SET_MAX_PRICE": {
+        const price = parseFloat(action.payload);
+        if (!isNaN(price)) {
+          const slider = document.getElementById("priceRangeSlider");
+          const label = document.getElementById("priceRangeValue");
+          if (slider) slider.value = Math.max(1, Math.min(15, price));
+          if (label) label.textContent = `$${price.toFixed(2)}`;
+          await this.filterCatalog();
+        }
+        break;
+      }
+
+      case "RESET_FILTERS": {
+        const searchInput = document.getElementById("globalSearchInput");
+        if (searchInput) searchInput.value = "";
+
+        const slider = document.getElementById("priceRangeSlider");
+        const label = document.getElementById("priceRangeValue");
+        if (slider) slider.value = 15;
+        if (label) label.textContent = "$15.00";
+
+        const chips = document.querySelectorAll("#dietaryFilterChips .diet-chip");
+        chips.forEach(chip => chip.classList.toggle("active", (chip.getAttribute("data-diet") || "") === ""));
+
+        const catPills = document.querySelectorAll(".cat-pill-item");
+        catPills.forEach((p, idx) => p.classList.toggle("active", idx === 0));
+        this.activeCategory = "All";
+
+        const heading = document.getElementById("currentCategoryHeading");
+        if (heading) heading.textContent = "Fresh Groceries & Essentials";
+
+        await this.filterCatalog("");
+        break;
+      }
+
+      case "SEARCH_STORE": {
+        const query = typeof action.payload === "string" ? action.payload : action.payload?.query;
+        const maxPrice = action.payload?.maxPrice;
+
+        const searchInput = document.getElementById("globalSearchInput");
+        if (searchInput && query !== undefined) searchInput.value = query;
+
+        if (maxPrice) {
+          const slider = document.getElementById("priceRangeSlider");
+          const label = document.getElementById("priceRangeValue");
+          if (slider) slider.value = maxPrice;
+          if (label) label.textContent = `$${parseFloat(maxPrice).toFixed(2)}`;
+        }
+
+        await this.filterCatalog(query || "");
+        if (action.scrollTarget) this.scrollToSection(action.scrollTarget);
+        break;
+      }
+
+      case "SET_THEME": {
+        const theme = action.payload === "dark" ? "dark" : action.payload === "light" ? "light" : (document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+        this.setTheme(theme);
+        break;
+      }
+
+      case "OPEN_CART_DRAWER": {
+        this.openCartDrawer();
+        break;
+      }
+
+      case "CLOSE_CART_DRAWER": {
+        this.closeCartDrawer();
+        break;
+      }
+
+      case "SET_WORKSPACE_TAB": {
+        const tab = action.payload || "restockPane";
+        this.switchWorkspaceTab(tab);
+        break;
+      }
+
+      case "SET_HANDSFREE_MODE": {
+        if (action.payload) {
+          this.openHandsFreeMode();
+        } else {
+          this.closeHandsFreeMode();
+        }
+        break;
+      }
+
+      case "SCROLL_TO_SECTION": {
+        const target = action.payload || "productsSection";
+        this.scrollToSection(target);
+        break;
+      }
+
+      default:
+        console.log(`[UI Action] Unhandled action: ${action.type}`, action);
+    }
+  }
+
+  scrollToSection(targetId) {
+    if (targetId === "top") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const elem = document.getElementById(targetId) || document.querySelector(`.${targetId}`);
+    if (elem) {
+      elem.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
 

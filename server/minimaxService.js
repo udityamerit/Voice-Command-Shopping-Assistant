@@ -114,7 +114,7 @@ function chunkCompoundQuery(transcript) {
 // Precisely classifies standard shopping intents without calling LLM.
 // All regex patterns are carefully ordered and scoped to avoid conflicts.
 // -----------------------------------------------------------------------
-function fastPathClassify(userTranscript, currentShoppingList = []) {
+function fastPathClassify(userTranscript, currentShoppingList = [], pageContext = null) {
   if (!userTranscript || typeof userTranscript !== "string") return null;
   const raw = userTranscript.trim();
   // Normalize for matching: lowercase, strip punctuation
@@ -125,19 +125,237 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     return {
       intent: "CHAT",
       detectedLanguage: "en",
-      spokenFeedback: "Hello! I'm VoiceCart AI. You can ask me to add groceries, remove items, find substitutes, check your cart, or place an order.",
+      spokenFeedback: "Hello! I'm VoiceCart AI. You can ask me to add groceries, navigate categories, filter organic or vegan foods, adjust price sliders, switch themes, open tabs, or place an order.",
       items: []
     };
   }
 
-  // ── 2. CLEAR Intent ──────────────────────────────────────────────────────
-  // IMPORTANT: Must fire BEFORE the cart/card check, and must NOT match "card" generically.
-  // Uses word-boundary matching to avoid "card" in "credit card" etc.
+  // ── 2. THEME CONTROL (Dark / Light Mode) ──────────────────────────────────
+  if (/\b(dark\s+mode|dark\s+theme|night\s+mode|turn\s+on\s+dark|enable\s+dark|switch\s+to\s+dark)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Switching to dark mode.",
+      uiAction: { type: "SET_THEME", payload: "dark" },
+      items: []
+    };
+  }
+  if (/\b(light\s+mode|light\s+theme|day\s+mode|turn\s+on\s+light|enable\s+light|switch\s+to\s+light)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Switching to light mode.",
+      uiAction: { type: "SET_THEME", payload: "light" },
+      items: []
+    };
+  }
+  if (/\b(toggle\s+theme|switch\s+theme|change\s+theme)\b/i.test(lower)) {
+    const next = pageContext?.theme === "dark" ? "light" : "dark";
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: `Switching theme to ${next} mode.`,
+      uiAction: { type: "SET_THEME", payload: next },
+      items: []
+    };
+  }
+
+  // ── 3. HANDS-FREE KITCHEN MODE ───────────────────────────────────────────
+  if (/\b(open|start|enable|enter|turn\s+on)\s+(hands\s*free|kitchen\s+mode|hud)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Entering Hands-Free Kitchen Mode with continuous voice listening.",
+      uiAction: { type: "SET_HANDSFREE_MODE", payload: true },
+      items: []
+    };
+  }
+  if (/\b(close|exit|leave|stop|turn\s+off)\s+(hands\s*free|kitchen\s+mode|hud)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Exiting Hands-Free mode.",
+      uiAction: { type: "SET_HANDSFREE_MODE", payload: false },
+      items: []
+    };
+  }
+
+  // ── 4. CART DRAWER OPEN / CLOSE ──────────────────────────────────────────
+  if (/\b(open|show|view|display)\s+(the\s+|my\s+)?(cart|cart\s+drawer|drawer)\b/i.test(lower) && !/^(add|buy|remove|delete)\b/i.test(lower)) {
+    return {
+      intent: "SHOW_CART",
+      detectedLanguage: "en",
+      spokenFeedback: "Opening your shopping cart drawer.",
+      uiAction: { type: "OPEN_CART_DRAWER" },
+      items: []
+    };
+  }
+  if (/\b(close|hide|dismiss)\s+(the\s+|my\s+)?(cart|cart\s+drawer|drawer)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Closing the cart drawer.",
+      uiAction: { type: "CLOSE_CART_DRAWER" },
+      items: []
+    };
+  }
+
+  // ── 5. WORKSPACE TABS (Restock Smart / Deals & Seasonal / Swap & Diet) ────
+  if (/\b(show|open|view|switch\s+to|go\s+to)\s+(deals|seasonal|discounts?|sales?|offers?)\b/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "Switching to the Deals & Seasonal Specials tab.",
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "dealsPane" },
+      items: []
+    };
+  }
+  if (/\b(show|open|view|switch\s+to|go\s+to)\s+(restock|replenish|restock\s+smart|pantry\s+alerts?)\b/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "Opening your AI Restock Alerts tab.",
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "restockPane" },
+      items: []
+    };
+  }
+  if (/\b(show|open|view|switch\s+to|go\s+to)\s+(swap|diet|substitutes?|alternatives?)\s+tab\b/i.test(lower)) {
+    return {
+      intent: "GET_SUBSTITUTE",
+      detectedLanguage: "en",
+      spokenFeedback: "Opening the Swap & Dietary Substitutes tab.",
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "subsPane" },
+      items: []
+    };
+  }
+
+  // ── 6. SCROLLING VIEW ACTIONS ─────────────────────────────────────────────
+  if (/\b(scroll\s+(down\s+)?to|show\s+me)\s+(recommended|recommendations|recommended\s+for\s+you|restock\s+carousel)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Scrolling to the Recommended For You section.",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "rfySection" },
+      items: []
+    };
+  }
+  if (/\b(scroll\s+to\s+products?|scroll\s+to\s+store|view\s+products?|show\s+products?)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Scrolling to the product catalog.",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "productsSection" },
+      items: []
+    };
+  }
+  if (/\b(scroll\s+to\s+top|go\s+to\s+top|back\s+to\s+top)\b/i.test(lower)) {
+    return {
+      intent: "UI_ACTION",
+      detectedLanguage: "en",
+      spokenFeedback: "Scrolling to the top of the page.",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "top" },
+      items: []
+    };
+  }
+
+  // ── 7. CATEGORY NAVIGATION ───────────────────────────────────────────────
+  // Supports all categories dynamically without hardcoding rigid phrases
+  const categoryMap = [
+    { match: /\b(produce|vegetables?|fruits?|veggies?)\b/i, category: "Produce", spoken: "Showing fresh vegetables and fruits in the Produce section." },
+    { match: /\b(dairy|milk|eggs|cheese|yogurt|dairy\s+and\s+eggs)\b/i, category: "Dairy & Eggs", spoken: "Navigating to Dairy, Bread & Eggs." },
+    { match: /\b(bakery|breads?|sourdough|croissant|bagels?)\b/i, category: "Bakery", spoken: "Showing fresh bakery and breads." },
+    { match: /\b(pantry|atta|rice|oil|olive\s+oil|flour|grains?)\b/i, category: "Pantry", spoken: "Showing essential pantry items, grains, and oils." },
+    { match: /\b(meat|seafood|chicken|salmon|fish|poultry)\b/i, category: "Meat & Seafood", spoken: "Showing meat and seafood." },
+    { match: /\b(beverages?|drinks?|juices?|cold\s+drinks?|coffee|soda)\b/i, category: "Beverages", spoken: "Showing cold drinks, coffee, and juices." },
+    { match: /\b(snacks?|munchies|chips|chocolates?|nuts|almonds)\b/i, category: "Snacks", spoken: "Showing snacks and munchies." },
+    { match: /\b(household|cleaning|soap|dish\s+soap|detergent|home\s+essentials?)\b/i, category: "Household", spoken: "Showing home and cleaning essentials." }
+  ];
+
+  if (/^(go\s+to|show|view|open|browse|switch\s+to|navigate\s+to|see)\s+/i.test(lower) && !/^(add|buy|remove|delete|clear|checkout)\b/i.test(lower)) {
+    for (const cat of categoryMap) {
+      if (cat.match.test(lower)) {
+        return {
+          intent: "NAVIGATE_CATEGORY",
+          detectedLanguage: "en",
+          spokenFeedback: cat.spoken,
+          uiAction: { type: "SET_CATEGORY", payload: cat.category, scrollTarget: "productsSection" },
+          items: []
+        };
+      }
+    }
+  }
+
+  // ── 8. DIETARY FILTERS (Organic, Vegan, Gluten-Free, Keto) ────────────────
+  if (/\b(filter\s+(by\s+)?organic|only\s+organic|organic\s+items?|show\s+organic)\b/i.test(lower)) {
+    return {
+      intent: "APPLY_FILTER",
+      detectedLanguage: "en",
+      spokenFeedback: "Filtering products to show Organic items.",
+      uiAction: { type: "SET_DIET_FILTER", payload: "Organic" },
+      items: []
+    };
+  }
+  if (/\b(filter\s+(by\s+)?vegan|only\s+vegan|vegan\s+items?|show\s+vegan|plant\s*based\s+only)\b/i.test(lower)) {
+    return {
+      intent: "APPLY_FILTER",
+      detectedLanguage: "en",
+      spokenFeedback: "Filtering products to show Vegan and plant-based items.",
+      uiAction: { type: "SET_DIET_FILTER", payload: "Vegan" },
+      items: []
+    };
+  }
+  if (/\b(filter\s+(by\s+)?gluten\s*free|gluten\s*free\s+only|show\s+gluten\s*free)\b/i.test(lower)) {
+    return {
+      intent: "APPLY_FILTER",
+      detectedLanguage: "en",
+      spokenFeedback: "Filtering products to show Gluten-Free options.",
+      uiAction: { type: "SET_DIET_FILTER", payload: "Gluten-Free" },
+      items: []
+    };
+  }
+  if (/\b(filter\s+(by\s+)?keto|keto\s+only|show\s+keto)\b/i.test(lower)) {
+    return {
+      intent: "APPLY_FILTER",
+      detectedLanguage: "en",
+      spokenFeedback: "Filtering products to show Keto-friendly items.",
+      uiAction: { type: "SET_DIET_FILTER", payload: "Keto" },
+      items: []
+    };
+  }
+
+  // ── 9. PRICE SLIDER FILTER ────────────────────────────────────────────────
+  const setPriceMatch = lower.match(/(?:set|change|adjust)?\s*(?:max\s*price|price\s*slider|price\s*range|budget|price\s*limit)\s*(?:to|under|=)?\s*\$?(\d+(?:\.\d+)?)/i);
+  if (setPriceMatch && !/^(add|buy|remove)\b/i.test(lower)) {
+    const priceVal = parseFloat(setPriceMatch[1]);
+    return {
+      intent: "SET_PRICE_FILTER",
+      detectedLanguage: "en",
+      spokenFeedback: `Setting maximum price filter to $${priceVal.toFixed(2)}.`,
+      uiAction: { type: "SET_MAX_PRICE", payload: priceVal },
+      items: []
+    };
+  }
+
+  // ── 10. RESET ALL FILTERS ────────────────────────────────────────────────
+  if (/\b(reset\s+filters?|clear\s+filters?|remove\s+filters?|show\s+all\s+products?|show\s+all\s+items?|all\s+categories)\b/i.test(lower)) {
+    return {
+      intent: "RESET_FILTERS",
+      detectedLanguage: "en",
+      spokenFeedback: "Reset all filters. Showing all items in the store.",
+      uiAction: { type: "RESET_FILTERS" },
+      items: []
+    };
+  }
+
+  // ── 11. CLEAR Intent ─────────────────────────────────────────────────────
+  // IMPORTANT: Must fire BEFORE the cart/card check, and must NOT match "card" generically or "reset filters".
   if (
-    /^(clear|empty|reset|delete\s+all|remove\s+all|delete\s+everything|remove\s+everything)\b/i.test(lower) ||
-    /\b(clear|empty)\s+(my\s+|the\s+|all\s+)?(cart|basket|list|shopping\s+list)\b/i.test(lower) ||
-    /\bremove\s+all\s+(items?|products?|things?)?\s*(from\s+(my\s+|the\s+)?(cart|list))?\b/i.test(lower) ||
-    lower === "clear" || lower === "empty" || lower === "clear cart" || lower === "empty cart"
+    !lower.includes("filter") && (
+      /^(clear|empty|reset\s+(my\s+|the\s+)?(cart|list|basket)|delete\s+all|remove\s+all|delete\s+everything|remove\s+everything)\b/i.test(lower) ||
+      /\b(clear|empty)\s+(my\s+|the\s+|all\s+)?(cart|basket|list|shopping\s+list)\b/i.test(lower) ||
+      /\bremove\s+all\s+(items?|products?|things?)?\s*(from\s+(my\s+|the\s+)?(cart|list))?\b/i.test(lower) ||
+      lower === "clear" || lower === "empty" || lower === "clear cart" || lower === "empty cart" || lower === "reset cart"
+    )
   ) {
     return {
       intent: "CLEAR",
@@ -147,73 +365,48 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // ── 3. CHECKOUT Intent ───────────────────────────────────────────────────
+  // ── 12. CHECKOUT Intent ──────────────────────────────────────────────────
   if (/^(checkout(\s+now)?|check\s+out(\s+now)?|place\s+(my\s+|the\s+)?order|buy\s+(now|everything|all)|order\s+now|complete\s+(my\s+)?(order|purchase)|pay\s+now)$/.test(lower)) {
     return {
       intent: "CHECKOUT",
       detectedLanguage: "en",
       spokenFeedback: "Placing your 10-minute delivery order now.",
+      uiAction: { type: "OPEN_CART_DRAWER" },
       items: []
     };
   }
 
-  // ── 4. SHOW_CART — Any query about cart contents, cost, or item count ───────
-  //
-  // KEY DESIGN: Uses SIMPLE WORD-PRESENCE matching instead of narrow phrase patterns.
-  // This covers ALL natural speech variations that STT produces:
-  //   "how many items present in my cart"  ← was broken, now fixed
-  //   "items in cart"                      ← fixed
-  //   "what do I have in the basket"       ← fixed  
-  //   "cart total"                          ← fixed
-  //   "how much is everything"             ← fixed
-  //   "tell me the cart contents"          ← fixed
-  //
-  // SAFETY: The !startsWithMutatingAction guard prevents ADD/REMOVE from matching here.
-  // e.g. "add 2 apples to my cart" → startsWithMutatingAction=true → goes to ADD ✓
-
-  // Words that signal the user is talking about their cart
+  // ── 13. SHOW_CART — Any query about cart contents, cost, or item count ────
   const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
-
-  // Words that signal a cost/total question even without "cart"
   const COST_WORDS = /\b(how\s+much|total\s+cost|total\s+price|total\s+bill|grand\s+total|price\s+total|bill\s+total|what\s+will\s+it\s+cost|what\s+does\s+it\s+cost)\b/i;
-
-  // Natural-language quantity questions about shopping items
   const ITEM_COUNT_WORDS = /\b(how\s+many\s+items?|how\s+many\s+things?|item\s+count|items?\s+(in|present|on)\b|count\s+of\s+items?)\b/i;
 
-  // Action verbs that WRITE to the cart — when these are present, it's NOT a cart VIEW query
   const startsWithMutatingAction = /^(add|buy|order|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
-  // Keep legacy alias for other intent checks below
   const startsWithAction = startsWithMutatingAction;
 
   const isCartQuery = (
-    // Any query mentioning cart/basket/list context words
     CART_WORDS.test(lower) ||
-    // Cost/total questions even without "cart" word
     COST_WORDS.test(lower) ||
-    // Item count / quantity questions
     ITEM_COUNT_WORDS.test(lower) ||
-    // Explicit view commands
     /^(show|view|check|display|open)\s+(me\s+)?(my\s+|the\s+)?(cart|basket|list|items|order)/i.test(lower) ||
-    // Exact short commands
     ["cart", "my cart", "view cart", "show cart", "total", "total price",
      "shopping list", "what is in my cart", "show list", "my list",
      "list items", "cart items", "cart summary"].includes(lower)
   );
 
-  // If query contains a price filter ("under $X"), it's always a SEARCH, never SHOW_CART
-  const hasPriceFilter = /under\s+\$?\d/i.test(lower);
+  const isRecommendationQuery = /\b(recommend|recommendations?|suggest|suggestions?|restock|deplet|depletion|deals?|seasonal)\b/i.test(lower);
 
-  if (isCartQuery && !startsWithMutatingAction && !hasPriceFilter) {
+  if (isCartQuery && !startsWithMutatingAction && !hasPriceFilter && !isRecommendationQuery) {
     return {
       intent: "SHOW_CART",
       detectedLanguage: "en",
       spokenFeedback: "Here is your cart summary with all current items, quantities, and total cost.",
+      uiAction: { type: "OPEN_CART_DRAWER" },
       items: []
     };
   }
 
-  // ── 5. STORE INVENTORY / CATALOG INQUIRY ────────────────────────────────
-  // Only fires for explicit "what do you have / sell / carry" queries — NOT cart queries.
+  // ── 14. STORE INVENTORY / CATALOG INQUIRY ────────────────────────────────
   if (
     /\bwhat\s+(do\s+you\s+(have|sell|carry|offer)|items?\s+(do\s+you\s+have|are\s+available))\b/.test(lower) ||
     /\b(in\s+(the|our|your)\s+(store|shop|market|catalog|inventory))\b/.test(lower) ||
@@ -230,17 +423,18 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     }
   }
 
-  // ── 6. GET_RECOMMENDATIONS Intent ────────────────────────────────────────
+  // ── 15. GET_RECOMMENDATIONS Intent ───────────────────────────────────────
   if (/^(what\s+should\s+i\s+(buy|get|add)|what\s+do\s+i\s+need|recommendations?|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items?|specials?|fruits?)|suggestions?|suggest\s+something|what('s|\s+is)\s+on\s+sale)$/.test(lower)) {
     return {
       intent: "GET_RECOMMENDATIONS",
       detectedLanguage: "en",
       spokenFeedback: "Here are your personalized restock and seasonal recommendations.",
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "restockPane" },
       items: []
     };
   }
 
-  // ── 7. GET_SUBSTITUTE Intent ─────────────────────────────────────────────
+  // ── 16. GET_SUBSTITUTE Intent ────────────────────────────────────────────
   const subMatch = lower.match(/(?:substitute|alternative|replace|swap|instead\s+of)\s+(?:for\s+)?([a-z0-9\s]+)/i);
   if (subMatch && !startsWithAction) {
     const target = subMatch[1].replace(/\b(please|now|thanks|me)\b/gi, "").trim();
@@ -249,11 +443,12 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
       detectedLanguage: "en",
       spokenFeedback: `Finding substitutes for ${target}.`,
       substituteTarget: target,
+      uiAction: { type: "SET_WORKSPACE_TAB", payload: "subsPane" },
       items: []
     };
   }
 
-  // ── 8. SEARCH Intent ─────────────────────────────────────────────────────
+  // ── 17. SEARCH Intent ────────────────────────────────────────────────────
   if (
     /^(search(\s+for)?|find(\s+me)?|show\s+me|look\s+for)\b/.test(lower) ||
     /under\s+\$?\d/.test(lower)
@@ -271,7 +466,8 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
       detectedLanguage: "en",
       spokenFeedback: `Searching for ${cleanQuery || "items"} in our store catalog.`,
       items: [],
-      searchParams: { query: cleanQuery, maxPrice }
+      searchParams: { query: cleanQuery, maxPrice },
+      uiAction: { type: "SEARCH_STORE", payload: { query: cleanQuery, maxPrice }, scrollTarget: "productsSection" }
     };
   }
 
@@ -411,7 +607,7 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
  *  4. MiniMax-M3 LLM for complex/multilingual queries
  *  5. Rule-based fallback if network fails
  */
-export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = []) {
+export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = [], pageContext = null) {
   if (!userTranscript || userTranscript.trim() === "") {
     return {
       intent: "CHAT",
@@ -429,13 +625,13 @@ export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppi
 
   // For single-chunk queries (the vast majority), use the standard flow
   if (chunks.length === 1) {
-    return await classifyAndExecuteSingleChunk(chunks[0], currentShoppingList);
+    return await classifyAndExecuteSingleChunk(chunks[0], currentShoppingList, pageContext);
   }
 
   // For multi-chunk compound commands, process each sub-intent and merge results
   const results = [];
   for (const chunk of chunks) {
-    const result = await classifyAndExecuteSingleChunk(chunk, currentShoppingList);
+    const result = await classifyAndExecuteSingleChunk(chunk, currentShoppingList, pageContext);
     results.push(result);
   }
 
@@ -446,26 +642,73 @@ export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppi
 /**
  * Classifies and returns a NLU result for a single atomic query chunk.
  */
-async function classifyAndExecuteSingleChunk(transcript, currentShoppingList) {
-  // Fast-path classifier
-  const fastResult = fastPathClassify(transcript, currentShoppingList);
+async function classifyAndExecuteSingleChunk(transcript, currentShoppingList, pageContext = null) {
+  // Fast-path classifier with live page context
+  const fastResult = fastPathClassify(transcript, currentShoppingList, pageContext);
   if (fastResult) {
     console.log(`[NLU Fast-Path] "${transcript}" → ${fastResult.intent}`);
     return fastResult;
   }
 
-  // Complex/multilingual → MiniMax-M3 LLM
-  console.log(`[NLU LLM Call] "${transcript}" — deferring to MiniMax-M3`);
-  const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} (${p.category})`).join(", ");
+  // Complex/multilingual/conversational → MiniMax-M3 LLM with full website awareness
+  console.log(`[NLU LLM Call] "${transcript}" — deferring to MiniMax-M3 with live website context`);
+  const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} ($${p.price.toFixed(2)}, ${p.category})`).join(", ");
 
-  const systemPrompt = `You are VoiceCart AI, a shopping assistant. Respond ONLY with strict JSON.
+  // Build live website context description
+  let websiteContextSnippet = "Website Live State:\n";
+  if (pageContext) {
+    websiteContextSnippet += `- Active Category View: "${pageContext.activeCategory || 'All'}"\n`;
+    websiteContextSnippet += `- Available Categories: ${pageContext.availableCategories?.map(c => c.category).join(', ') || 'All, Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, Household'}\n`;
+    websiteContextSnippet += `- Active Dietary Filter: "${pageContext.activeDietaryFilter || 'All'}"\n`;
+    websiteContextSnippet += `- Price Slider Max Filter: $${pageContext.priceFilter?.currentMax || 15.00}\n`;
+    websiteContextSnippet += `- Active Theme: "${pageContext.theme || 'light'}"\n`;
+    websiteContextSnippet += `- Active Sidebar Tab: "${pageContext.activeWorkspaceTab?.name || 'Restock Smart'}"\n`;
+    websiteContextSnippet += `- Cart Drawer Open: ${Boolean(pageContext.isCartDrawerOpen)}\n`;
+    websiteContextSnippet += `- Hands-Free Kitchen Mode Active: ${Boolean(pageContext.isHandsFreeActive)}\n`;
+    if (pageContext.visibleProducts && pageContext.visibleProducts.length > 0) {
+      websiteContextSnippet += `- Currently Visible On Screen (${pageContext.visibleProducts.length} items): ${pageContext.visibleProducts.slice(0, 10).map(p => `${p.name} ($${p.price})`).join(', ')}\n`;
+    }
+  }
+
+  const systemPrompt = `You are VoiceCart AI, the intelligent voice assistant controlling the entire 10-minute grocery delivery website.
+You have full access to scan and control every part of the website: product catalog, shopping cart, categories, dietary filters, price slider, dark/light theme, hands-free mode, and sidebar tabs.
+
+${websiteContextSnippet}
 Store Catalog: ${catalogProductNames}
-Valid intents: "ADD", "REMOVE", "MODIFY_QTY", "SEARCH", "GET_SUBSTITUTE", "GET_RECOMMENDATIONS", "RECIPE_EXPAND", "CLEAR", "SHOW_CART", "CHECKOUT", "CHAT"
-Output format (strict JSON, no markdown):
-{"intent":"ADD","detectedLanguage":"en","spokenFeedback":"Short 1-sentence response","items":[{"name":"item name","quantity":1,"category":"Produce"}]}`;
 
-  const userPrompt = `Current cart: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity })))}
-User said: "${transcript}"`;
+Valid intents:
+- "ADD": Add product(s) to shopping cart.
+- "REMOVE": Remove item(s) from cart.
+- "MODIFY_QTY": Change quantity of an item.
+- "CLEAR": Empty shopping cart.
+- "SHOW_CART": Inspect or open shopping cart.
+- "CHECKOUT": Place the delivery order.
+- "SEARCH": Search for products in the store by query, max price, or category.
+- "NAVIGATE_CATEGORY": Change product category view (Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, Household, All).
+- "APPLY_FILTER": Apply dietary filter (Organic, Vegan, Gluten-Free, Keto, All).
+- "SET_PRICE_FILTER": Adjust the max price filter slider.
+- "RESET_FILTERS": Clear search and reset category/diet/price filters to default.
+- "TOGGLE_THEME": Switch between dark mode and light mode.
+- "OPEN_CART_DRAWER" / "CLOSE_CART_DRAWER": Open or close the cart slideout panel.
+- "SWITCH_TAB": Switch AI sidebar tab (restockPane, dealsPane, subsPane).
+- "TOGGLE_HANDSFREE": Enable or exit hands-free kitchen voice mode.
+- "SCROLL_VIEW": Scroll page to (rfySection, productsSection, top).
+- "GET_SUBSTITUTE": Find healthy/dietary replacements for an item.
+- "GET_RECOMMENDATIONS": Show predictive restock or seasonal deals.
+- "CHAT": Answer questions about the store, website view, visible items, delivery time, or cart.
+
+Respond ONLY with strict JSON (no markdown fences, no explanatory text outside JSON).
+Format:
+{
+  "intent": "ADD" | "NAVIGATE_CATEGORY" | "APPLY_FILTER" | "SET_PRICE_FILTER" | "RESET_FILTERS" | "TOGGLE_THEME" | "SHOW_CART" | "SEARCH" | "CHAT" | ...,
+  "detectedLanguage": "en",
+  "spokenFeedback": "Natural, clear, concise voice response spoken back to user.",
+  "items": [{"name": "item name", "quantity": 1, "category": "Produce"}],
+  "uiAction": {"type": "SET_CATEGORY" | "SET_THEME" | "SET_DIET_FILTER" | "SET_MAX_PRICE" | "OPEN_CART_DRAWER" | "CLOSE_CART_DRAWER" | "RESET_FILTERS" | "SET_WORKSPACE_TAB" | "SET_HANDSFREE_MODE" | "SCROLL_TO_SECTION", "payload": "value", "scrollTarget": "productsSection"}
+}`;
+
+  const userPrompt = `Current Cart Items: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity, price: i.price })))}
+User Spoken Command: "${transcript}"`;
 
   try {
     const controller = new AbortController();
