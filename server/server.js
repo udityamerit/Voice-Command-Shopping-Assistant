@@ -168,6 +168,37 @@ app.get("/api/shopping-list", (req, res) => {
   });
 });
 
+// Helper: Match item from catalog or create a free-form item by name.
+// Used by the manual add endpoint when only a name is provided (not a productId).
+function matchOrCreateItem({ name, quantity = 1, unit, category, estimatedPrice, dietary }) {
+  // Try to match via catalog first (uses the same resolution as voice commands)
+  const catalogResult = resolveCatalogItem({ name, quantity, unit });
+  if (catalogResult.matched && catalogResult.item) {
+    return {
+      ...catalogResult.item,
+      quantity: Math.max(1, parseInt(quantity, 10) || 1)
+    };
+  }
+
+  // Not in catalog: create a free-form cart item
+  return {
+    id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    name: name.trim(),
+    quantity: Math.max(1, parseInt(quantity, 10) || 1),
+    unit: unit || "1 unit",
+    category: category || "Pantry",
+    price: parseFloat(estimatedPrice) || 1.99,
+    originalPrice: null,
+    brand: "Custom",
+    completed: false,
+    emoji: "🛒",
+    dietary: dietary || [],
+    productId: null,
+    addedVia: "manual",
+    createdAt: new Date().toISOString()
+  };
+}
+
 // Add Item Manually or from Product ID
 app.post("/api/shopping-list/item", (req, res) => {
   const { productId, name, quantity = 1, unit, category, price, dietary } = req.body;

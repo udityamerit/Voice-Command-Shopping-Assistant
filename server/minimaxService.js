@@ -157,23 +157,53 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
     };
   }
 
-  // ── 4. SHOW_CART — Cart cost, quantity, content questions ────────────────
-  // Very precise: must NOT fire when query also starts with "add", "buy", "remove".
-  // Also handles the common STT error "car" for "cart".
-  // "car" as cart-substitute is only valid when preceded by cart-context words.
-  const isCartQuery =
-    /^(what('s|\s+is|\s+do\s+i\s+have|\s+are\s+in)?\s+(in\s+)?(my\s+|the\s+)?(cart|basket|list|bag))/.test(lower) ||
-    /^(show|view|check|display|list)\s+(me\s+)?(my\s+|the\s+)?(cart|basket|list|items|order)/.test(lower) ||
-    /\b(how\s+much|total\s+cost|total\s+price|total\s+bill|what\s+is\s+the\s+total)\b/.test(lower) ||
-    /\bhow\s+many\s+items?\s+(do\s+i\s+have|are\s+(in|on)\s+(my|the))/.test(lower) ||
-    /(cost|price|total|value|amount)\s+(of\s+)?(my\s+|the\s+)?(cart|basket|list|bag|items?)/.test(lower) ||
-    /\b(cart|basket|my\s+list)\s+(total|summary|cost|price)\b/.test(lower) ||
-    lower === "cart" || lower === "my cart" || lower === "view cart" || lower === "show cart" ||
-    lower === "total" || lower === "total price" || lower === "shopping list" || lower === "what is in my cart";
+  // ── 4. SHOW_CART — Any query about cart contents, cost, or item count ───────
+  //
+  // KEY DESIGN: Uses SIMPLE WORD-PRESENCE matching instead of narrow phrase patterns.
+  // This covers ALL natural speech variations that STT produces:
+  //   "how many items present in my cart"  ← was broken, now fixed
+  //   "items in cart"                      ← fixed
+  //   "what do I have in the basket"       ← fixed  
+  //   "cart total"                          ← fixed
+  //   "how much is everything"             ← fixed
+  //   "tell me the cart contents"          ← fixed
+  //
+  // SAFETY: The !startsWithMutatingAction guard prevents ADD/REMOVE from matching here.
+  // e.g. "add 2 apples to my cart" → startsWithMutatingAction=true → goes to ADD ✓
 
-  const startsWithAction = /^(add|buy|order|remove|delete|take out|drop|clear|empty)\b/.test(lower);
+  // Words that signal the user is talking about their cart
+  const CART_WORDS = /\b(cart|basket|my\s+list|shopping\s+list|bag|trolley)\b/i;
 
-  if (isCartQuery && !startsWithAction) {
+  // Words that signal a cost/total question even without "cart"
+  const COST_WORDS = /\b(how\s+much|total\s+cost|total\s+price|total\s+bill|grand\s+total|price\s+total|bill\s+total|what\s+will\s+it\s+cost|what\s+does\s+it\s+cost)\b/i;
+
+  // Natural-language quantity questions about shopping items
+  const ITEM_COUNT_WORDS = /\b(how\s+many\s+items?|how\s+many\s+things?|item\s+count|items?\s+(in|present|on)\b|count\s+of\s+items?)\b/i;
+
+  // Action verbs that WRITE to the cart — when these are present, it's NOT a cart VIEW query
+  const startsWithMutatingAction = /^(add|buy|order|remove|delete|take\s+out|drop|clear|empty)\b/i.test(lower);
+  // Keep legacy alias for other intent checks below
+  const startsWithAction = startsWithMutatingAction;
+
+  const isCartQuery = (
+    // Any query mentioning cart/basket/list context words
+    CART_WORDS.test(lower) ||
+    // Cost/total questions even without "cart" word
+    COST_WORDS.test(lower) ||
+    // Item count / quantity questions
+    ITEM_COUNT_WORDS.test(lower) ||
+    // Explicit view commands
+    /^(show|view|check|display|open)\s+(me\s+)?(my\s+|the\s+)?(cart|basket|list|items|order)/i.test(lower) ||
+    // Exact short commands
+    ["cart", "my cart", "view cart", "show cart", "total", "total price",
+     "shopping list", "what is in my cart", "show list", "my list",
+     "list items", "cart items", "cart summary"].includes(lower)
+  );
+
+  // If query contains a price filter ("under $X"), it's always a SEARCH, never SHOW_CART
+  const hasPriceFilter = /under\s+\$?\d/i.test(lower);
+
+  if (isCartQuery && !startsWithMutatingAction && !hasPriceFilter) {
     return {
       intent: "SHOW_CART",
       detectedLanguage: "en",
@@ -289,15 +319,24 @@ function fastPathClassify(userTranscript, currentShoppingList = []) {
   }
 
   // ── 11. GENERAL QUESTION GUARD ───────────────────────────────────────────
-  // IMPORTANT FIX: This must check for cart/show_cart queries FIRST (done above).
-  // Only questions that don't relate to the cart end up here as CHAT.
-  if (/^(what|how|who|why|where|when|which|is\s+there|are\s+there|do\s+you|can\s+you|tell\s+me)\b/.test(lower) && !isCartQuery) {
-    return {
-      intent: "CHAT",
-      detectedLanguage: "en",
-      spokenFeedback: "I can help you add groceries, check your cart, find substitutes, or search store items. What would you like to do?",
-      items: []
-    };
+  //
+  // CRITICAL FIX: Return NULL (defer to LLM) instead of CHAT.
+  //
+  // Previously this returned CHAT immediately for any question-word query that
+  // didn't match the narrow isCartQuery patterns — silently blocking queries like
+  // "how many items present in my cart" from ever reaching the LLM.
+  //
+  // Now we ONLY return CHAT for pure greetings/help (handled in step 1).
+  // All other question-form queries are deferred to MiniMax-M3 LLM which is
+  // far better at understanding natural language intent.
+  //
+  // The LLM and the fallbackRuleBasedParser both correctly handle:
+  //   "how many items present in my cart" → SHOW_CART
+  //   "what do you sell"                  → SEARCH
+  //   "who are you"                       → CHAT
+  //   "can you add milk"                  → ADD
+  if (/^(what|how|who|why|where|when|which|is\s+there|are\s+there|do\s+you|can\s+you|tell\s+me)\b/.test(lower)) {
+    return null; // Defer to LLM — do NOT short-circuit as CHAT
   }
 
   // ── 12. ADD Intent ───────────────────────────────────────────────────────
