@@ -4,6 +4,8 @@ jspm_packages/
 
 # Environment and Secret configuration files
 .env
+.env.example
+
 .env.local
 .env.development.local
 .env.test.local
