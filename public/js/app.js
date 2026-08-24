@@ -97,6 +97,10 @@ class VoiceShoppingApp {
         if (userTextInput && display) userTextInput.value = display;
         if (hudUserText && display) hudUserText.textContent = `"${display}"`;
 
+        if (interim) {
+          this.visualizer?.start("listening");
+        }
+
         if (final && final.trim() !== "") {
           this.handleVoiceCommand(final.trim());
         }
@@ -229,10 +233,17 @@ class VoiceShoppingApp {
       UI.showToast(`Voice set to ${e.target.options[e.target.selectedIndex].text}`, "info", "fa-globe");
     });
 
-    // Persona Selector
-    document.getElementById("voicePersonaSelect")?.addEventListener("change", (e) => {
-      UI.showToast(`Voice persona: ${e.target.options[e.target.selectedIndex].text}`, "info", "fa-microphone");
-    });
+    // Persona Selector with LocalStorage Persistence
+    const personaSelect = document.getElementById("voicePersonaSelect");
+    const savedPersona = localStorage.getItem("voicecart_voice_persona") || "English_radiant_girl";
+    if (personaSelect) {
+      personaSelect.value = savedPersona;
+      personaSelect.addEventListener("change", (e) => {
+        const val = e.target.value;
+        localStorage.setItem("voicecart_voice_persona", val);
+        UI.showToast(`Voice persona: ${e.target.options[e.target.selectedIndex].text}`, "info", "fa-microphone");
+      });
+    }
 
     // Replay Audio button
     document.getElementById("replayAudioBtn")?.addEventListener("click", () => {
@@ -535,6 +546,11 @@ class VoiceShoppingApp {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
+      
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find(v => (v.name.includes("Google") || v.name.includes("Natural") || v.name.includes("Zira") || v.name.includes("Samantha")) && v.lang.startsWith("en")) || voices.find(v => v.lang.startsWith("en"));
+      if (preferred) utterance.voice = preferred;
+
       utterance.onstart = () => this.visualizer.start("speaking");
       utterance.onend = () => this.visualizer.stop();
       utterance.onerror = () => this.visualizer.stop();
