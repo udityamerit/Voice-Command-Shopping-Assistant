@@ -10,7 +10,8 @@ import {
   getPredictiveReplenishment,
   getSeasonalAndSaleRecommendations,
   getProductSubstitutes,
-  searchCatalog
+  searchCatalog,
+  findCatalogProduct
 } from "./recommendationEngine.js";
 import {
   parseVoiceCommandWithMiniMax,
@@ -73,28 +74,34 @@ let shoppingList = [
   }
 ];
 
-// Helper: Match or create item object
-function matchOrCreateItem({ name, quantity = 1, unit = "item", category = "Pantry", estimatedPrice = 3.99, dietary = [] }) {
-  const normName = name.toLowerCase().trim();
-  const matchedProduct = PRODUCT_CATALOG.find(p =>
-    p.name.toLowerCase() === normName ||
-    p.name.toLowerCase().includes(normName) ||
-    normName.includes(p.name.toLowerCase())
-  );
+// Helper: Match product strictly in catalog
+function resolveCatalogItem({ name, quantity = 1, unit = null }) {
+  const matchedProduct = findCatalogProduct(name);
+  if (!matchedProduct) {
+    return {
+      matched: false,
+      requestedName: name
+    };
+  }
 
+  const qty = Math.max(1, parseInt(quantity, 10) || 1);
   return {
-    id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    name: matchedProduct ? matchedProduct.name : (name.charAt(0).toUpperCase() + name.slice(1)),
-    quantity: Math.max(1, parseInt(quantity, 10) || 1),
-    unit: matchedProduct ? matchedProduct.unit : unit,
-    category: matchedProduct ? matchedProduct.category : (category || "Pantry"),
-    price: matchedProduct ? matchedProduct.price : (parseFloat(estimatedPrice) || 3.50),
-    completed: false,
-    emoji: matchedProduct ? matchedProduct.emoji : "🛒",
-    dietary: matchedProduct ? matchedProduct.dietary : (dietary || []),
-    productId: matchedProduct ? matchedProduct.id : null,
-    addedVia: "voice",
-    createdAt: new Date().toISOString()
+    matched: true,
+    item: {
+      id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      productId: matchedProduct.id,
+      name: matchedProduct.name,
+      quantity: qty,
+      unit: matchedProduct.unit || unit || "1 unit",
+      category: matchedProduct.category || "Pantry",
+      price: matchedProduct.price,
+      completed: false,
+      emoji: matchedProduct.emoji || "🛒",
+      image: matchedProduct.image || null,
+      dietary: matchedProduct.dietary || [],
+      addedVia: "voice",
+      createdAt: new Date().toISOString()
+    }
   };
 }
 
@@ -252,45 +259,94 @@ app.post("/api/voice/process", async (req, res) => {
     let recommendationData = null;
 
     // 2. Execute List Mutations based on Intent
+    let finalSpokenFeedback = nlpResult.spokenFeedback;
+
     if (intent === "ADD" || intent === "RECIPE_EXPAND") {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
+        const addedItems = [];
+        const unavailableItems = [];
+
         for (const itemData of nlpResult.items) {
-          const itemObj = matchOrCreateItem(itemData);
-          const existing = shoppingList.find(i => i.name.toLowerCase() === itemObj.name.toLowerCase());
-          if (existing) {
-            existing.quantity += itemObj.quantity;
-            actionsTaken.push(`Updated ${existing.name} quantity to ${existing.quantity}`);
+          const res = resolveCatalogItem(itemData);
+          if (res.matched && res.item) {
+            const itemObj = res.item;
+            const existing = shoppingList.find(i => i.productId === itemObj.productId || i.name.toLowerCase() === itemObj.name.toLowerCase());
+            if (existing) {
+              existing.quantity += itemObj.quantity;
+              actionsTaken.push(`Updated ${existing.name} quantity to ${existing.quantity}`);
+              addedItems.push({ name: existing.name, quantity: itemObj.quantity });
+            } else {
+              shoppingList.unshift(itemObj);
+              actionsTaken.push(`Added ${itemObj.quantity}x ${itemObj.name} (${itemObj.category})`);
+              addedItems.push({ name: itemObj.name, quantity: itemObj.quantity });
+            }
           } else {
-            shoppingList.unshift(itemObj);
-            actionsTaken.push(`Added ${itemObj.quantity}x ${itemObj.name} (${itemObj.category})`);
+            unavailableItems.push(itemData.name || res.requestedName || "item");
+            actionsTaken.push(`Item '${itemData.name || "item"}' is currently not in store catalog`);
           }
+        }
+
+        // Contextual speech feedback based on catalog availability
+        if (unavailableItems.length > 0) {
+          if (addedItems.length > 0) {
+            const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ");
+            finalSpokenFeedback = `Added ${addedSummary} to your cart. However, '${unavailableItems.join("', '")}' is currently not available in our store.`;
+          } else {
+            finalSpokenFeedback = `Sorry, '${unavailableItems.join("', '")}' is currently not available in our store. We deliver fresh produce, dairy, bakery, meat, pantry, beverages, snacks, and household essentials in 10 minutes.`;
+          }
+        } else if (addedItems.length > 0) {
+          const addedSummary = addedItems.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ");
+          finalSpokenFeedback = `Added ${addedSummary} to your cart.`;
         }
       }
     } else if (intent === "REMOVE") {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
+        const removed = [];
         for (const target of nlpResult.items) {
           const targetName = (target.name || "").toLowerCase().trim();
           const initialLen = shoppingList.length;
-          shoppingList = shoppingList.filter(i => !i.name.toLowerCase().includes(targetName) && !targetName.includes(i.name.toLowerCase()));
-          if (shoppingList.length < initialLen) {
-            actionsTaken.push(`Removed ${target.name}`);
+          const matchIndex = shoppingList.findIndex(i =>
+            i.name.toLowerCase() === targetName ||
+            i.name.toLowerCase().includes(targetName) ||
+            targetName.includes(i.name.toLowerCase())
+          );
+
+          if (matchIndex !== -1) {
+            const removedItem = shoppingList.splice(matchIndex, 1)[0];
+            removed.push(removedItem.name);
+            actionsTaken.push(`Removed ${removedItem.name}`);
           }
+        }
+        if (removed.length > 0) {
+          finalSpokenFeedback = `Removed ${removed.join(", ")} from your cart.`;
+        } else {
+          finalSpokenFeedback = `I couldn't find '${nlpResult.items.map(i => i.name).join(", ")}' in your cart.`;
         }
       }
     } else if (intent === "MODIFY_QTY") {
       if (Array.isArray(nlpResult.items) && nlpResult.items.length > 0) {
+        const modified = [];
         for (const mod of nlpResult.items) {
           const targetName = (mod.name || "").toLowerCase().trim();
-          const existing = shoppingList.find(i => i.name.toLowerCase().includes(targetName) || targetName.includes(i.name.toLowerCase()));
+          const existing = shoppingList.find(i =>
+            i.name.toLowerCase() === targetName ||
+            i.name.toLowerCase().includes(targetName) ||
+            targetName.includes(i.name.toLowerCase())
+          );
           if (existing && mod.quantity) {
             existing.quantity = Math.max(1, parseInt(mod.quantity, 10));
             actionsTaken.push(`Adjusted ${existing.name} quantity to ${existing.quantity}`);
+            modified.push(`${existing.name} to ${existing.quantity}`);
           }
+        }
+        if (modified.length > 0) {
+          finalSpokenFeedback = `Updated quantity of ${modified.join(", ")}.`;
         }
       }
     } else if (intent === "CLEAR") {
       shoppingList = [];
       actionsTaken.push("Cleared all shopping list items");
+      finalSpokenFeedback = "I've cleared all items from your cart.";
     } else if (intent === "SEARCH") {
       const p = nlpResult.searchParams || {};
       searchResults = searchCatalog({
@@ -301,19 +357,51 @@ app.post("/api/voice/process", async (req, res) => {
         dietary: p.dietary
       });
       actionsTaken.push(`Found ${searchResults.length} matching products`);
+      if (searchResults.length > 0) {
+        finalSpokenFeedback = `Found ${searchResults.length} items matching '${p.query || transcript}'.`;
+      } else {
+        finalSpokenFeedback = `No items found matching '${p.query || transcript}'. Try searching for produce, milk, bakery, or snacks.`;
+      }
     } else if (intent === "GET_SUBSTITUTE") {
       const target = nlpResult.substituteTarget || transcript;
       substituteData = getProductSubstitutes(target);
       actionsTaken.push(`Found ${substituteData.substitutes.length} substitutes for ${substituteData.target?.name || target}`);
+      if (substituteData.substitutes.length > 0) {
+        finalSpokenFeedback = `Here are ${substituteData.substitutes.length} substitutes for ${substituteData.target?.name || target}: ${substituteData.substitutes.map(s => s.name).slice(0, 2).join(" and ")}.`;
+      } else {
+        finalSpokenFeedback = `I couldn't find direct substitutes for '${target}'. Explore our catalogue for similar items.`;
+      }
     } else if (intent === "GET_RECOMMENDATIONS") {
       const replenishment = getPredictiveReplenishment(shoppingList.map(i => i.name));
       const seasonal = getSeasonalAndSaleRecommendations();
       recommendationData = { replenishment, seasonal };
       actionsTaken.push("Fetched personalized recommendations");
+      finalSpokenFeedback = "Here are your personalized restock and seasonal recommendations.";
+    } else if (intent === "SHOW_CART") {
+      if (shoppingList.length === 0) {
+        finalSpokenFeedback = "Your cart is currently empty. You can say 'Add milk and sourdough bread' to get started.";
+        actionsTaken.push("Checked cart status: empty");
+      } else {
+        const total = shoppingList.reduce((s, i) => s + (i.price * i.quantity), 0).toFixed(2);
+        const itemSummaries = shoppingList.map(i => `${i.quantity}x ${i.name}`).join(", ");
+        finalSpokenFeedback = `You have ${shoppingList.length} items in your cart: ${itemSummaries}, totaling $${total}.`;
+        actionsTaken.push(`Checked cart status: ${shoppingList.length} items, $${total}`);
+      }
+    } else if (intent === "CHECKOUT") {
+      if (shoppingList.length === 0) {
+        finalSpokenFeedback = "Your cart is empty! Please add items before checking out.";
+        actionsTaken.push("Checkout attempted with empty cart");
+      } else {
+        const total = shoppingList.reduce((s, i) => s + (i.price * i.quantity), 0).toFixed(2);
+        const orderId = `ORD_${Date.now().toString().slice(-6)}`;
+        finalSpokenFeedback = `Order placed successfully! Total is $${total}. Your fresh groceries are arriving in 10 minutes.`;
+        actionsTaken.push(`Placed order #${orderId} for $${total}`);
+        shoppingList = []; // Clear cart on checkout
+      }
     }
 
     // 3. Synthesize Spoken Audio using MiniMax Speech-2.8-HD TTS
-    const speechText = nlpResult.spokenFeedback || "Your shopping list has been updated.";
+    const speechText = finalSpokenFeedback || nlpResult.spokenFeedback || "Your cart has been updated.";
     const ttsResult = await generateMiniMaxSpeech(speechText, voiceId);
 
     res.json({

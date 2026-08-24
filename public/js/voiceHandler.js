@@ -1,16 +1,19 @@
 // public/js/voiceHandler.js - Robust Web Speech API Handler with Instant Feedback & Fallbacks
 
 export class VoiceHandler {
-  constructor({ onTranscript, onStateChange, onError }) {
+  constructor({ onTranscript, onStateChange, onError, onAudioStream, onBargeIn }) {
     this.onTranscript = onTranscript || (() => {});
     this.onStateChange = onStateChange || (() => {});
     this.onError = onError || (() => {});
+    this.onAudioStream = onAudioStream || (() => {});
+    this.onBargeIn = onBargeIn || (() => {});
 
     this.recognition = null;
     this.isListening = false;
     this.isContinuous = false;
     this.selectedLanguage = "en-US";
     this.mediaStream = null;
+    this.hasMicPermission = false;
 
     this.initRecognition();
   }
@@ -26,15 +29,32 @@ export class VoiceHandler {
       this.recognition = new SpeechRecognition();
       this.recognition.continuous = false;
       this.recognition.interimResults = true;
-      this.recognition.maxAlternatives = 1;
+      this.recognition.maxAlternatives = 3;
       this.recognition.lang = this.selectedLanguage;
 
       this.recognition.onstart = () => {
         this.isListening = true;
-        this.onStateChange({ listening: true });
+        this.onStateChange({ listening: true, error: null });
+        this.onBargeIn();
+      };
+
+      this.recognition.onspeechstart = () => {
+        // User started speaking: interrupt any playing assistant speech immediately
+        this.onBargeIn();
+      };
+
+      this.recognition.onsoundstart = () => {
+        this.onBargeIn();
+      };
+
+      this.recognition.onaudiostart = () => {
+        this.onBargeIn();
       };
 
       this.recognition.onresult = (event) => {
+        // Cut off any assistant speech on speech detection
+        this.onBargeIn();
+
         let interimTranscript = "";
         let finalTranscript = "";
 
@@ -47,20 +67,40 @@ export class VoiceHandler {
           }
         }
 
-        this.onTranscript({
-          interim: interimTranscript.trim(),
-          final: finalTranscript.trim()
-        });
+        if (finalTranscript.trim() !== "") {
+          this.onTranscript({
+            interim: "",
+            final: finalTranscript.trim()
+          });
+        } else if (interimTranscript.trim() !== "") {
+          this.onTranscript({
+            interim: interimTranscript.trim(),
+            final: ""
+          });
+        }
       };
 
       this.recognition.onerror = (event) => {
-        console.warn("Speech Recognition notice:", event.error);
+        console.warn("Speech Recognition status:", event.error);
+
+        // Ignore benign no-speech timeout (user just waited a second)
+        if (event.error === "no-speech") {
+          return;
+        }
+
+        // Aborted is normal when user clicks stop
+        if (event.error === "aborted") {
+          this.isListening = false;
+          this.onStateChange({ listening: false });
+          return;
+        }
+
         this.isListening = false;
         this.onStateChange({ listening: false, error: event.error });
         this.onError(event.error);
 
-        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-          this.promptFallbackInput("Microphone access is blocked in your browser. Please allow microphone permissions or type your command:");
+        if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") {
+          this.promptFallbackInput("Microphone access is unavailable or blocked in your browser. Please type your command below:");
         }
       };
 
@@ -86,11 +126,27 @@ export class VoiceHandler {
     }
   }
 
-  promptFallbackInput(message = "Enter your grocery voice command:") {
+  promptFallbackInput(message = "Enter your grocery voice command (e.g. 'Add 2 apples and milk'):") {
     const input = window.prompt(message, "Add 2 bottles of whole milk and 1 loaf of sourdough bread");
     if (input && input.trim() !== "") {
       this.onTranscript({ interim: "", final: input.trim() });
     }
+  }
+
+  async requestMicrophoneAccess() {
+    if (this.mediaStream) return this.mediaStream;
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.mediaStream = stream;
+        this.hasMicPermission = true;
+        this.onAudioStream(stream);
+        return stream;
+      }
+    } catch (err) {
+      console.warn("Microphone getUserMedia permission notice:", err.message);
+    }
+    return null;
   }
 
   startListening(continuous = false) {
@@ -101,22 +157,32 @@ export class VoiceHandler {
       return;
     }
 
+    // Call recognition.start() synchronously to maintain Chrome's user gesture context
     try {
       this.recognition.continuous = continuous;
       this.recognition.lang = this.selectedLanguage;
       this.recognition.start();
       this.isListening = true;
-      this.onStateChange({ listening: true });
+      this.onStateChange({ listening: true, error: null });
     } catch (e) {
       console.log("Speech recognition start note:", e.message);
-      // If already started, toggle off and on cleanly
       try {
         this.recognition.stop();
         setTimeout(() => {
-          try { this.recognition.start(); } catch (err) {}
-        }, 100);
+          try {
+            this.recognition.lang = this.selectedLanguage;
+            this.recognition.start();
+            this.isListening = true;
+            this.onStateChange({ listening: true, error: null });
+          } catch (err) {
+            console.error("Second attempt speech start error:", err);
+          }
+        }, 150);
       } catch (err) {}
     }
+
+    // Request media stream non-blockingly for visualizer
+    this.requestMicrophoneAccess().catch(() => {});
   }
 
   stopListening() {
@@ -138,3 +204,4 @@ export class VoiceHandler {
     }
   }
 }
+

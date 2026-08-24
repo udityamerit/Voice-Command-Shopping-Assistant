@@ -13,7 +13,160 @@ const MINIMAX_TTS_URL = process.env.MINIMAX_TTS_URL || "https://api.minimax.io/v
 const audioCache = new Map();
 
 /**
- * Parses user voice transcript or text using MiniMax-M3 LLM.
+ * Fast-path deterministic classifier (< 2ms response time)
+ * Accurately parses standard shopping intents and extracts multi-item grocery lists.
+ */
+function fastPathClassify(userTranscript, currentShoppingList = []) {
+  if (!userTranscript || typeof userTranscript !== "string") return null;
+  const raw = userTranscript.trim();
+  const lower = raw.toLowerCase();
+
+  // 1. CLEAR Intent
+  if (/^(clear|empty|reset)\s*(all|my)?\s*(shopping\s*list|cart|items|everything)?$/i.test(lower) || lower === "clear" || lower === "empty cart") {
+    return {
+      intent: "CLEAR",
+      detectedLanguage: "en",
+      spokenFeedback: "I've cleared all items from your cart.",
+      items: []
+    };
+  }
+
+  // 2. SHOW_CART Intent
+  if (/^(what('s|\s+is)\s+in\s+my\s+cart|show\s+(my\s+)?(cart|list)|view\s+(my\s+)?(cart|list)|check\s+cart|how\s+many\s+items)/i.test(lower)) {
+    return {
+      intent: "SHOW_CART",
+      detectedLanguage: "en",
+      spokenFeedback: "Here is what's currently in your cart.",
+      items: []
+    };
+  }
+
+  // 3. CHECKOUT Intent
+  if (/^(checkout|place\s+(my\s+)?order|buy\s+(now|everything|all)|order\s+now|complete\s+order)$/i.test(lower)) {
+    return {
+      intent: "CHECKOUT",
+      detectedLanguage: "en",
+      spokenFeedback: "Placing your 10-minute delivery order now.",
+      items: []
+    };
+  }
+
+  // 4. GET_RECOMMENDATIONS Intent
+  if (/^(what\s+should\s+i\s+buy|what\s+do\s+i\s+need|recommendations|restock|what\s+am\s+i\s+low\s+on|seasonal\s+(items|specials|fruits))/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "Here are your personalized restock and seasonal recommendations.",
+      items: []
+    };
+  }
+
+  // 5. GET_SUBSTITUTE Intent
+  const subMatch = lower.match(/(?:substitute|alternative|replace|swap)\s+(?:for\s+)?([a-z0-9\s]+)/i);
+  if (subMatch && !lower.startsWith("add") && !lower.startsWith("buy")) {
+    const target = subMatch[1].replace(/please|now|thanks/gi, "").trim();
+    return {
+      intent: "GET_SUBSTITUTE",
+      detectedLanguage: "en",
+      spokenFeedback: `Finding substitutes for ${target}.`,
+      substituteTarget: target,
+      items: []
+    };
+  }
+
+  // 6. SEARCH Intent
+  if (lower.startsWith("search") || lower.startsWith("find") || lower.includes("under $") || lower.includes("under ")) {
+    const priceMatch = lower.match(/under\s+\$?(\d+(?:\.\d+)?)/i);
+    const maxPrice = priceMatch ? parseFloat(priceMatch[1]) : null;
+    let cleanQuery = lower
+      .replace(/^(search|find|show\s+me|look\s+for)\s+(for\s+)?/i, "")
+      .replace(/under\s+\$?\d+(?:\.\d+)?/i, "")
+      .replace(/please|fast|now/gi, "")
+      .trim();
+
+    return {
+      intent: "SEARCH",
+      detectedLanguage: "en",
+      spokenFeedback: `Searching for ${cleanQuery || "items"} in our store catalog.`,
+      items: [],
+      searchParams: {
+        query: cleanQuery,
+        maxPrice
+      }
+    };
+  }
+
+  // 7. REMOVE Intent
+  if (lower.startsWith("remove") || lower.startsWith("delete") || lower.startsWith("take out") || lower.startsWith("drop")) {
+    const clean = lower
+      .replace(/^(remove|delete|take\s+out|drop)\s+/i, "")
+      .replace(/\s+(from\s+(my\s+)?(cart|list)|please|now)$/gi, "")
+      .trim();
+
+    const parts = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
+    const items = parts.map(p => ({ name: p.trim(), quantity: 1 }));
+    return {
+      intent: "REMOVE",
+      detectedLanguage: "en",
+      spokenFeedback: `Removing ${clean} from your cart.`,
+      items
+    };
+  }
+
+  // 8. MODIFY_QTY Intent
+  const modMatch = lower.match(/(?:change|make|update|set|increase|decrease)\s+([a-z\s]+?)\s+(?:quantity\s+)?(?:to\s+)?(\d+)/i);
+  if (modMatch) {
+    const targetItem = modMatch[1].replace(/quantity|of|the/gi, "").trim();
+    const qty = parseInt(modMatch[2], 10);
+    return {
+      intent: "MODIFY_QTY",
+      detectedLanguage: "en",
+      spokenFeedback: `Updating quantity of ${targetItem} to ${qty}.`,
+      items: [{ name: targetItem, quantity: qty }]
+    };
+  }
+
+  // 9. ADD Intent (Handles "Add 2 apples and 1 milk", "buy milk", "i need bread and eggs")
+  if (lower.startsWith("add") || lower.startsWith("buy") || lower.startsWith("i need") || lower.startsWith("put") || lower.startsWith("get")) {
+    const clean = lower
+      .replace(/^(add|buy|i\s+need|put|get)\s+/i, "")
+      .replace(/\s+(to\s+(my\s+)?(cart|list)|in\s+(my\s+)?(cart|list)|please|now)$/gi, "")
+      .trim();
+
+    // Split compound items by "and" or comma
+    const rawChunks = clean.split(/\s*(?:,|and|\+)\s*/).filter(Boolean);
+    const items = [];
+
+    for (const chunk of rawChunks) {
+      const match = chunk.match(/^(?:(\d+)\s*(?:bottles?|packs?|boxes?|bunches?|loaves?|loaf|lbs?|items?|bags?|cans?|jars?)?\s*(?:of\s+)?)?(.+)$/i);
+      if (match) {
+        const qty = match[1] ? parseInt(match[1], 10) : 1;
+        const name = (match[2] || chunk).trim();
+        if (name) {
+          items.push({
+            name,
+            quantity: Math.max(1, qty),
+            unit: "item"
+          });
+        }
+      }
+    }
+
+    if (items.length > 0) {
+      return {
+        intent: "ADD",
+        detectedLanguage: "en",
+        spokenFeedback: `Adding ${items.map(i => `${i.quantity > 1 ? i.quantity + 'x ' : ''}${i.name}`).join(", ")} to your cart.`,
+        items
+      };
+    }
+  }
+
+  return null; // Defer to MiniMax-M3 LLM for complex/multilingual/conversational queries
+}
+
+/**
+ * Parses user voice transcript or text using High-Speed Hybrid Architecture.
  */
 export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppingList = []) {
   if (!userTranscript || userTranscript.trim() === "") {
@@ -25,141 +178,92 @@ export async function parseVoiceCommandWithMiniMax(userTranscript, currentShoppi
     };
   }
 
-  const catalogSummary = PRODUCT_CATALOG.slice(0, 30).map(p => ({
-    id: p.id,
-    name: p.name,
-    category: p.category,
-    price: p.price,
-    unit: p.unit
-  }));
+  // 1. Check Fast-Path (< 2ms response time)
+  const fastResult = fastPathClassify(userTranscript, currentShoppingList);
+  if (fastResult) {
+    return fastResult;
+  }
 
-  const systemPrompt = `You are the AI brain of an industry-grade Voice Shopping Assistant called 'VoiceCart AI'.
-Your job is to understand natural language shopping commands in ANY language (English, Spanish, French, German, Hindi, Japanese, Chinese, etc.) and return a strict, valid JSON response.
+  // 2. Complex or Multilingual Queries: MiniMax-M3 LLM
+  const catalogProductNames = PRODUCT_CATALOG.map(p => `${p.name} (${p.category})`).join(", ");
 
-Supported Intent Types:
-- "ADD": User wants to add one or more items to their shopping list. Example: "Add 2 bottles of whole milk and 1 loaf of artisan bread", "I need fresh apples".
-- "REMOVE": User wants to remove one or more items from their list. Example: "Remove milk from my list", "Delete eggs". MUST include the item name(s) to remove in the "items" array, e.g. [{"name": "whole milk"}].
-- "MODIFY_QTY": User wants to adjust quantity or unit of an existing item. Example: "Change milk quantity to 3 bottles".
-- "SEARCH": User wants to search or filter products by keyword, brand, or price. Example: "Find me organic snacks under $5", "Search for gluten-free pasta".
-- "GET_SUBSTITUTE": User asks for an alternative, substitute, or healthier/cheaper option. Example: "Suggest an alternative for regular milk", "What can I replace bread with?".
-- "GET_RECOMMENDATIONS": User asks what they should buy, what's on sale, what's in season, or what they're low on. Example: "What do I need to restock?", "Any seasonal fruits on sale?".
-- "RECIPE_EXPAND": User asks to add ingredients for a recipe or meal. Example: "Add ingredients for avocado toast", "I want to cook pasta marinara".
-- "CLEAR": User asks to clear or empty the shopping list. Example: "Clear my entire shopping list".
-- "CHAT": General greeting, question about features, or conversation.
+  const systemPrompt = `You are VoiceCart AI shopping assistant. Return strict JSON.
+Store Catalog: ${catalogProductNames}
+Intents: "ADD", "REMOVE", "MODIFY_QTY", "SEARCH", "GET_SUBSTITUTE", "GET_RECOMMENDATIONS", "RECIPE_EXPAND", "CLEAR", "SHOW_CART", "CHECKOUT", "CHAT"
+Output format:
+{"intent": "ADD", "detectedLanguage": "en", "spokenFeedback": "Short 1-sentence response", "items": [{"name": "item", "quantity": 1, "category": "Pantry"}]}`;
 
-Standard Available Categories:
-Produce, Dairy & Eggs, Bakery, Pantry, Meat & Seafood, Beverages, Snacks, Household.
-
-Output Format: You MUST output ONLY valid JSON matching this exact schema:
-{
-  "intent": "ADD" | "REMOVE" | "MODIFY_QTY" | "SEARCH" | "GET_SUBSTITUTE" | "GET_RECOMMENDATIONS" | "RECIPE_EXPAND" | "CLEAR" | "CHAT",
-  "detectedLanguage": "en" | "es" | "fr" | "de" | "hi" | "zh" | "ja" | "other",
-  "spokenFeedback": "Concise natural voice response to speak to the user in their language (maximum 1-2 sentences)",
-  "items": [
-    {
-      "name": "Item name in English or user language",
-      "quantity": 1,
-      "unit": "bottle" | "pack" | "bunch" | "loaf" | "lb" | "box" | "item" | "etc",
-      "category": "Produce" | "Dairy & Eggs" | "Bakery" | "Pantry" | "Meat & Seafood" | "Beverages" | "Snacks" | "Household",
-      "estimatedPrice": 3.99,
-      "dietary": ["Organic", "Gluten-Free", "Vegan"],
-      "matchedCatalogId": "optional catalog product ID if clear match"
-    }
-  ],
-  "searchParams": {
-    "query": "search query string",
-    "maxPrice": null or number,
-    "minPrice": null or number,
-    "category": "All" or category name,
-    "dietary": "optional dietary filter e.g. Organic, Vegan, Gluten-Free"
-  },
-  "substituteTarget": "product name to find substitutes for if GET_SUBSTITUTE"
-}`;
-
-  const userPrompt = `Current Shopping List Items: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity, cat: i.category })))}
-User Spoken Voice Command: "${userTranscript}"
-
-Respond with ONLY the JSON object. Do not include markdown code block formatting if possible.`;
+  const userPrompt = `Cart: ${JSON.stringify(currentShoppingList.map(i => ({ name: i.name, qty: i.quantity })))}
+User: "${userTranscript}"`;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
     const response = await fetch(`${MINIMAX_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${MINIMAX_API_KEY}`,
         "Content-Type": "application/json"
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: "MiniMax-M3",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
-        ]
+        ],
+        temperature: 0.1,
+        max_tokens: 250
       })
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error(`MiniMax Chat API error (${response.status}):`, errText);
       return fallbackRuleBasedParser(userTranscript, currentShoppingList);
     }
 
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || "";
-
-    // Strip out <think>...</think> if present
     content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
-    // Remove markdown code fences if present
-    if (content.startsWith("```json")) {
-      content = content.substring(7);
-    }
-    if (content.startsWith("```")) {
-      content = content.substring(3);
-    }
-    if (content.endsWith("```")) {
-      content = content.substring(0, content.length - 3);
-    }
+    if (content.startsWith("```json")) content = content.substring(7);
+    if (content.startsWith("```")) content = content.substring(3);
+    if (content.endsWith("```")) content = content.substring(0, content.length - 3);
     content = content.trim();
 
-    const parsed = JSON.parse(content);
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      const match = content.match(/\{[\s\S]*\}/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      } else {
+        return fallbackRuleBasedParser(userTranscript, currentShoppingList);
+      }
+    }
 
-    // Normalize items to ensure array of objects with { name, quantity, category, unit }
     if (parsed.items && Array.isArray(parsed.items)) {
-      parsed.items = parsed.items.map(item => {
-        if (typeof item === "string") {
-          return { name: item, quantity: 1, category: "Pantry", unit: "item" };
-        }
-        return {
-          name: item.name || item.item || "item",
-          quantity: parseInt(item.quantity, 10) || 1,
-          unit: item.unit || "item",
-          category: item.category || "Pantry",
-          estimatedPrice: item.estimatedPrice || item.price || 3.99,
-          dietary: Array.isArray(item.dietary) ? item.dietary : [],
-          matchedCatalogId: item.matchedCatalogId || null
-        };
-      });
-    } else if (parsed.item || parsed.target) {
-      const single = parsed.item || parsed.target;
-      parsed.items = [{
-        name: typeof single === "string" ? single : (single.name || "item"),
-        quantity: parseInt(single?.quantity, 10) || 1,
-        category: single?.category || "Pantry",
-        unit: single?.unit || "item"
-      }];
+      parsed.items = parsed.items.map(item => ({
+        name: typeof item === "string" ? item : (item.name || "item"),
+        quantity: parseInt(item.quantity, 10) || 1,
+        unit: item.unit || "item",
+        category: item.category || "Pantry"
+      }));
     } else {
       parsed.items = [];
     }
 
     return parsed;
   } catch (err) {
-    console.error("Error executing MiniMax LLM parsing:", err.message);
+    console.warn("LLM fallback triggered for:", userTranscript, err.message);
     return fallbackRuleBasedParser(userTranscript, currentShoppingList);
   }
 }
 
 /**
- * Generates natural spoken audio for the assistant using MiniMax Speech-2.8-HD TTS API.
+ * Generates natural spoken audio using MiniMax Speech-2.8-HD TTS API with timeout protection.
  */
 export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_girl") {
   if (!text || text.trim() === "") {
@@ -174,13 +278,16 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
   }
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2800); // 2.8s TTS limit
+
     const payload = {
       model: "speech-2.8-hd",
       text: cleanText,
       stream: false,
       voice_setting: {
         voice_id: voiceId,
-        speed: 1.0,
+        speed: 1.05,
         vol: 1.0,
         pitch: 0
       },
@@ -199,29 +306,22 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
         "Authorization": `Bearer ${MINIMAX_API_KEY}`,
         "Content-Type": "application/json"
       },
+      signal: controller.signal,
       body: JSON.stringify(payload)
     });
+    clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`MiniMax TTS API failed with status ${response.status}:`, errText);
-      return null;
-    }
+    if (!response.ok) return null;
 
     const resJson = await response.json();
     const hexAudio = resJson.data?.audio;
-    if (!hexAudio) {
-      console.warn("No audio data in MiniMax TTS response:", resJson);
-      return null;
-    }
+    if (!hexAudio) return null;
 
-    // Convert hex string to binary buffer and base64
     const audioBuffer = Buffer.from(hexAudio, "hex");
     const base64Audio = audioBuffer.toString("base64");
     const audioDataUrl = `data:audio/mp3;base64,${base64Audio}`;
 
-    // Cache up to 100 audio phrases
-    if (audioCache.size > 100) {
+    if (audioCache.size > 150) {
       const firstKey = audioCache.keys().next().value;
       audioCache.delete(firstKey);
     }
@@ -229,7 +329,6 @@ export async function generateMiniMaxSpeech(text, voiceId = "English_radiant_gir
 
     return { audioDataUrl, audioBuffer };
   } catch (err) {
-    console.error("MiniMax TTS request exception:", err.message);
     return null;
   }
 }

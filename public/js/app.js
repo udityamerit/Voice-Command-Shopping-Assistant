@@ -59,13 +59,41 @@ class VoiceShoppingApp {
     this.visualizer = new AudioVisualizer("audioVisualizer");
   }
 
+  stopAssistantSpeaking() {
+    // Cut off TTS audio playback immediately
+    const player = document.getElementById("ttsAudioPlayer");
+    if (player) {
+      try {
+        player.pause();
+        player.currentTime = 0;
+      } catch (e) {}
+    }
+    // Cut off native Web Speech Synthesis
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+    // Reset visualizer
+    if (this.visualizer) {
+      this.visualizer.stop();
+    }
+  }
+
   initVoiceHandler() {
     this.voiceHandler = new VoiceHandler({
+      onAudioStream: (stream) => {
+        this.visualizer.attachMicrophone(stream);
+      },
+      onBargeIn: () => {
+        // User is speaking or mic is engaged: immediately stop assistant from speaking
+        this.stopAssistantSpeaking();
+      },
       onTranscript: ({ interim, final }) => {
         const transcriptText = document.getElementById("liveUserTranscript");
         const hudUserText = document.getElementById("hudUserText");
 
-        const display = final || interim || "Listening...";
+        const display = final || interim || "Listening... Speak your grocery command";
         if (transcriptText) transcriptText.textContent = `"${display}"`;
         if (hudUserText) hudUserText.textContent = `"${display}"`;
 
@@ -78,23 +106,31 @@ class VoiceShoppingApp {
         const searchMic = document.getElementById("searchBarMicBtn");
         const hudOrb = document.getElementById("hudMicBtn");
         const hudStatus = document.getElementById("hudStatus");
+        const transcriptText = document.getElementById("liveUserTranscript");
+        const heroMicIcon = document.getElementById("heroMicIcon");
 
         if (listening) {
+          this.stopAssistantSpeaking();
           heroMic?.classList.add("listening");
           searchMic?.classList.add("listening");
           hudOrb?.classList.add("listening");
+          if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone-lines";
           if (hudStatus) hudStatus.textContent = "Listening... Speak your grocery command";
+          if (transcriptText && transcriptText.textContent.includes("Ready")) {
+            transcriptText.textContent = '"Listening... Speak now (e.g. Add 2 apples and milk)"';
+          }
           this.visualizer.start("listening");
         } else {
           heroMic?.classList.remove("listening");
           searchMic?.classList.remove("listening");
           hudOrb?.classList.remove("listening");
+          if (heroMicIcon) heroMicIcon.className = "fa-solid fa-microphone";
           if (hudStatus) hudStatus.textContent = "Listening continuously... Speak your grocery commands";
           this.visualizer.stop();
         }
 
-        if (error) {
-          UI.showToast(`Voice notice: ${error}`, "info", "fa-microphone-slash");
+        if (error && error !== "no-speech" && error !== "aborted") {
+          UI.showToast(`Microphone: ${error}`, "info", "fa-microphone-slash");
         }
       },
       onError: (err) => {
@@ -106,16 +142,19 @@ class VoiceShoppingApp {
   initEventListeners() {
     // Hero Mic button
     document.getElementById("heroMainMicBtn")?.addEventListener("click", () => {
+      this.stopAssistantSpeaking();
       this.voiceHandler.toggleListening(false);
     });
 
     // Search bar embedded mic button
     document.getElementById("searchBarMicBtn")?.addEventListener("click", () => {
+      this.stopAssistantSpeaking();
       this.voiceHandler.toggleListening(false);
     });
 
     // Hands-free HUD Mic Orb click
     document.getElementById("hudMicBtn")?.addEventListener("click", () => {
+      this.stopAssistantSpeaking();
       this.voiceHandler.toggleListening(true);
     });
 
@@ -146,6 +185,7 @@ class VoiceShoppingApp {
 
     // Click on User Transcript bubble to type command directly
     document.querySelector(".bubble-user")?.addEventListener("click", () => {
+      this.stopAssistantSpeaking();
       const text = window.prompt("Type your voice command directly:", "Add 2 bottles of oat milk and 1 loaf of sourdough bread");
       if (text && text.trim()) {
         const transcriptText = document.getElementById("liveUserTranscript");
@@ -172,6 +212,7 @@ class VoiceShoppingApp {
         if (chip) {
           const cmd = chip.getAttribute("data-cmd");
           if (cmd) {
+            this.stopAssistantSpeaking();
             const transcriptText = document.getElementById("liveUserTranscript");
             if (transcriptText) transcriptText.textContent = `"${cmd}"`;
             this.handleVoiceCommand(cmd);
@@ -185,6 +226,7 @@ class VoiceShoppingApp {
       chip.addEventListener("click", (e) => {
         const cmd = e.currentTarget.getAttribute("data-cmd");
         if (cmd) {
+          this.stopAssistantSpeaking();
           const transcriptText = document.getElementById("liveUserTranscript");
           if (transcriptText) transcriptText.textContent = `"${cmd}"`;
           this.handleVoiceCommand(cmd);
@@ -333,8 +375,10 @@ class VoiceShoppingApp {
     window.addEventListener("keydown", (e) => {
       if (e.code === "Space" && !["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) {
         e.preventDefault();
+        this.stopAssistantSpeaking();
         this.voiceHandler.toggleListening(this.isHandsFree);
       } else if (e.code === "Escape") {
+        this.stopAssistantSpeaking();
         if (this.isHandsFree) this.closeHandsFreeMode();
         this.closeCartDrawer();
       }
@@ -343,6 +387,10 @@ class VoiceShoppingApp {
 
   // Handle Spoken Commands via MiniMax-M3 LLM + Speech-2.8 Neural TTS
   async handleVoiceCommand(transcript) {
+    if (!transcript || transcript.trim() === "") return;
+    if (this.isProcessingCommand) return;
+    this.isProcessingCommand = true;
+
     const aiBadge = document.getElementById("detectedIntentBadge");
     const aiText = document.getElementById("assistantResponseText");
     const hudAiText = document.getElementById("hudAiText");
@@ -369,7 +417,7 @@ class VoiceShoppingApp {
       if (result.audioDataUrl) {
         this.lastAudioDataUrl = result.audioDataUrl;
         if (replayBtn) replayBtn.style.display = "inline-flex";
-        this.playAssistantAudio(result.audioDataUrl);
+        this.playAssistantAudio(result.audioDataUrl, speechText);
       } else {
         this.fallbackSpeakText(speechText);
       }
@@ -382,8 +430,13 @@ class VoiceShoppingApp {
       // Refresh list & catalog
       await this.refreshShoppingList();
 
-      // If intent is SEARCH, filter main catalog
-      if (result.intent === "SEARCH") {
+      // Handle specific UI actions per intent
+      if (result.intent === "SHOW_CART") {
+        this.openCartDrawer();
+      } else if (result.intent === "CHECKOUT") {
+        this.openCartDrawer();
+        UI.showToast("🎉 Order Placed Successfully! Delivery in 10 mins.", "success", "fa-circle-check");
+      } else if (result.intent === "SEARCH") {
         const p = result.nlp?.searchParams || {};
         if (p.maxPrice) {
           const slider = document.getElementById("priceRangeSlider");
@@ -392,16 +445,10 @@ class VoiceShoppingApp {
           if (label) label.textContent = `$${p.maxPrice.toFixed(2)}`;
         }
         await this.filterCatalog(p.query || "");
-      }
-
-      // If intent is GET_SUBSTITUTE
-      if (result.intent === "GET_SUBSTITUTE" && result.substituteData) {
+      } else if (result.intent === "GET_SUBSTITUTE" && result.substituteData) {
         this.switchWorkspaceTab("subsPane");
         UI.renderSubstitutes(result.substituteData, (id) => this.addItemFromCatalog(id));
-      }
-
-      // If intent is GET_RECOMMENDATIONS
-      if (result.intent === "GET_RECOMMENDATIONS") {
+      } else if (result.intent === "GET_RECOMMENDATIONS") {
         this.switchWorkspaceTab("restockPane");
         await this.loadReplenishmentSuggestions();
       }
@@ -411,35 +458,50 @@ class VoiceShoppingApp {
       if (aiBadge) aiBadge.textContent = "ERROR";
       if (aiText) aiText.textContent = `Sorry, I encountered an issue: ${err.message}`;
       UI.showToast(err.message, "error", "fa-triangle-exclamation");
+    } finally {
+      this.isProcessingCommand = false;
     }
   }
 
-  playAssistantAudio(audioDataUrl) {
-    if (!audioDataUrl) return;
+  playAssistantAudio(audioDataUrl, fallbackText = "") {
+    if (!audioDataUrl) {
+      if (fallbackText) this.fallbackSpeakText(fallbackText);
+      return;
+    }
     const player = document.getElementById("ttsAudioPlayer");
-    if (!player) return;
+    if (!player) {
+      if (fallbackText) this.fallbackSpeakText(fallbackText);
+      return;
+    }
 
     player.src = audioDataUrl;
     player.onplay = () => this.visualizer.start("speaking");
     player.onended = () => this.visualizer.stop();
     player.onerror = () => {
       this.visualizer.stop();
-      console.warn("Audio playback error");
+      if (fallbackText) this.fallbackSpeakText(fallbackText);
     };
 
     player.play().catch(e => {
-      console.warn("Autoplay audio blocked or pending user interaction:", e);
+      console.warn("Autoplay audio notice, falling back to speech synthesis:", e);
+      if (fallbackText) this.fallbackSpeakText(fallbackText);
     });
   }
 
   fallbackSpeakText(text) {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onstart = () => this.visualizer.start("speaking");
-    utterance.onend = () => this.visualizer.stop();
-    utterance.onerror = () => this.visualizer.stop();
-    window.speechSynthesis.speak(utterance);
+    if (!window.speechSynthesis || !text) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.onstart = () => this.visualizer.start("speaking");
+      utterance.onend = () => this.visualizer.stop();
+      utterance.onerror = () => this.visualizer.stop();
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.warn("Speech synthesis fallback failed:", e);
+    }
   }
 
   switchWorkspaceTab(paneId) {
