@@ -200,18 +200,24 @@ const COMMON_MISHEARS_MAP = {
   "gluten free": "gluten-free"
 };
 
-// ── 2. Protected Common English Words & Conjunctions (Never Autocorrect) ────
+// ── 2. Protected Common English Words & UI/E-Commerce Nouns (Never Autocorrect) ──
 const PROTECTED_WORDS = new Set([
   "and", "the", "for", "to", "in", "on", "at", "by", "with", "from", "of",
   "now", "my", "me", "you", "it", "those", "that", "them", "this", "all",
   "are", "have", "can", "what", "how", "under", "new", "not", "any", "some",
   "like", "then", "also", "out", "off", "up", "down", "is", "a", "an", "do", "i",
   "there", "here", "where", "which", "why", "who", "when", "about", "sell", "tell",
-  "dairy", "breads", "bread", "fruits", "fruit", "vegetables", "vegetable", "veggies",
-  "drinks", "drink", "juices", "juice", "meats", "meat", "munchies", "cleaning",
-  "sale", "sales", "deal", "deals", "discount", "discounts", "special", "specials",
+  "give", "show", "list", "view", "open", "check", "find", "search", "explain", "say",
+  "present", "section", "sections", "recommendation", "recommendations", "recommended",
+  "carousel", "shelf", "shelves", "tab", "tabs", "details", "options", "screen",
+  "display", "header", "footer", "suggestions", "suggest", "replenishment", "restock",
+  "seasonal", "deals", "sale", "sales", "deal", "discount", "discounts", "special", "specials",
+  "popular", "trending", "menu", "browse", "explore", "system", "store", "shop",
+  "site", "website", "page", "catalog", "catalogue", "available", "availability",
+  "inventory", "stock", "items", "item", "cart", "order", "orders", "fresh",
   "price", "prices", "cost", "costs", "how", "much",
-  "items", "item", "store", "website", "app", "cart", "order", "orders", "fresh"
+  "dairy", "breads", "bread", "fruits", "fruit", "vegetables", "vegetable", "veggies",
+  "drinks", "drink", "juices", "juice", "meats", "meat", "munchies", "cleaning"
 ]);
 
 // ── 3. Build Vocabulary from Catalog & Actions ────────────────────────────
@@ -245,12 +251,12 @@ function findClosestVocabWord(word) {
   if (!word || word.length < 3 || /^\d+$/.test(word)) return word;
   const lower = word.toLowerCase();
 
-  // 1. Never modify protected common English words
+  // 1. Never modify protected common English & UI context words
   if (PROTECTED_WORDS.has(lower)) {
     return word;
   }
 
-  // 2. Direct dictionary check
+  // 2. Direct dictionary check for known STT mishears
   if (COMMON_MISHEARS_MAP[lower]) {
     return COMMON_MISHEARS_MAP[lower];
   }
@@ -264,28 +270,30 @@ function findClosestVocabWord(word) {
   let bestMatch = word;
   let minDistance = Infinity;
 
-  // Max allowable distance scales with word length (1 for short words, 2 for longer)
-  const maxDistance = lower.length <= 4 ? 1 : 2;
-
+  // Strict distance limits: only distance 1 for short words, max 2 if soundex matches exactly
   for (const vocabWord of VOCABULARY) {
     if (typeof vocabWord !== "string" || vocabWord.includes(" ")) continue;
-    // Don't fuzzily replace unknown words with protected stop words (e.g. don't replace "and" with "add")
     if (PROTECTED_WORDS.has(vocabWord)) continue;
-    if (Math.abs(vocabWord.length - lower.length) > maxDistance) continue;
+    
+    // Length difference cannot exceed 1
+    if (Math.abs(vocabWord.length - lower.length) > 1) continue;
 
     const dist = levenshteinDistance(lower, vocabWord);
     const sameSoundex = getSoundex(vocabWord) === wordSoundex;
 
-    // Weight distance lower if phonetically identical
+    // Allow distance 1 unconditionally, or distance 2 ONLY IF phonetically identical (same Soundex)
+    const isCandidate = dist === 1 || (dist === 2 && sameSoundex && lower.length >= 5);
+    if (!isCandidate) continue;
+
     const effectiveDist = sameSoundex ? dist - 0.5 : dist;
 
-    if (dist <= maxDistance && effectiveDist < minDistance) {
+    if (effectiveDist < minDistance) {
       minDistance = effectiveDist;
       bestMatch = vocabWord;
     }
   }
 
-  return minDistance <= maxDistance ? bestMatch : word;
+  return minDistance < Infinity ? bestMatch : word;
 }
 
 /**

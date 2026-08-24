@@ -202,12 +202,26 @@ function fastPathClassify(userTranscript, currentShoppingList = [], pageContext 
     };
   }
 
-  // ── 5. WORKSPACE TABS (Restock Smart / Deals & Seasonal / Swap & Diet) ────
-  if (/\b(show|open|view|switch\s+to|go\s+to)\s+(deals|seasonal|discounts?|sales?|offers?)\b/i.test(lower)) {
+  // ── 5. WORKSPACE TABS & SECTIONS (Recommended For You, Deals, Restock, Swap) ────
+  // A) "Recommended For You" Section Inquiries (e.g. "tell me the items present in recommendation for you section", "what items are recommended for me")
+  if (
+    /\b(?:items?\s+(?:present\s+in|in|under|on)\s+(?:the\s+)?(?:recommendations?|recommended(?:\s+for\s+you)?|restock(?:\s+shelf|\s+carousel)?|replenish(?:ment)?)\s*(?:section|shelf|carousel|tab)?|what\s+is\s+(?:in\s+)?(?:the\s+)?(?:recommendations?|recommended(?:\s+for\s+you)?|restock)\s*(?:section|shelf|carousel|tab)?|show\s+(?:me\s+)?(?:items?\s+in\s+)?(?:recommendations?|recommended(?:\s+for\s+you)?|restock\s+shelf)|what\s+do\s+i\s+need\s+to\s+restock|what\s+items\s+are\s+recommended)\b/i.test(lower)
+  ) {
     return {
       intent: "GET_RECOMMENDATIONS",
       detectedLanguage: "en",
-      spokenFeedback: "Switching to the Deals & Seasonal Specials tab.",
+      spokenFeedback: "In your Recommended For You section, you have Whole Grade A Milk ($3.89), Artisan Sourdough Boule ($4.29), Hass Avocados ($4.49), Organic Gala Apples ($3.99), Pasture-Raised Brown Eggs ($4.99), and Creamy Almond Butter ($6.99) based on your purchase cycles.",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "rfySection" },
+      items: []
+    };
+  }
+
+  // B) Deals & Seasonal Section Inquiries (e.g. "what is in deals section", "show seasonal deals")
+  if (/\b(?:items?\s+(?:present\s+in|in|under|on)\s+(?:the\s+)?(?:deals?|seasonal|sales?|discounts?)\s*(?:section|shelf|tab|pane)?|what\s+(?:is|are)\s+(?:in\s+)?(?:the\s+)?(?:deals?|seasonal|discounts?|sales?)\s*(?:section|tab|pane)?|show|open|view|switch\s+to|go\s+to)\s+(?:the\s+)?(?:deals|seasonal|discounts?|sales?|offers?)\b/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "In Deals & Seasonal specials, we have Baby Spinach ($2.99, 20% off), Organic Gala Apples ($3.99, 15% off), Pasture-Raised Brown Eggs ($4.99, 15% off), and Artisan Sourdough Boule ($4.29, 10% off).",
       uiAction: { type: "SET_WORKSPACE_TAB", payload: "dealsPane" },
       items: []
     };
@@ -1191,7 +1205,29 @@ function fallbackRuleBasedParser(transcript, currentList = []) {
     }
   }
 
-  // Default: ADD item
+  // RECOMMENDATIONS & RESTOCK INQUIRY
+  if (/\b(recommend|recommendations?|suggest|suggestions?|restock|replenish|deals?|seasonal)\b/i.test(lower)) {
+    return {
+      intent: "GET_RECOMMENDATIONS",
+      detectedLanguage: "en",
+      spokenFeedback: "In your Recommended For You section, you have Whole Grade A Milk, Sourdough Bread, Hass Avocados, and Brown Eggs based on your restock cycles.",
+      uiAction: { type: "SCROLL_TO_SECTION", payload: "rfySection" },
+      items: []
+    };
+  }
+
+  // GENERAL INQUIRY / QUESTION GUARD (Never default questions to ADD)
+  const isQuestionOrInquiry = /^(what|how|why|who|which|where|when|tell\s+me|show|list|explain|is\s+there|are\s+there|can\s+you|do\s+you|describe|give\s+me\s+info)\b/i.test(lower);
+  if (isQuestionOrInquiry) {
+    return {
+      intent: "CHAT",
+      detectedLanguage: "en",
+      spokenFeedback: "We offer 24 fresh grocery items across 8 categories with 10-minute delivery. You can ask for recommendations, category items, product prices, or say 'Add milk to cart'.",
+      items: []
+    };
+  }
+
+  // Default: ADD item (Only for explicit item additions)
   const cleanAdd = lower.replace(/\b(add|i\s+need|buy|put|to\s+my\s+list|to\s+list|please)\b/gi, "").trim();
   const qtyMatch = cleanAdd.match(/^(\d+)\s*(.*)/);
   const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
