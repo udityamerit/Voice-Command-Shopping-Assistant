@@ -66,11 +66,17 @@
   --shadow-green: 0 4px 16px rgba(16, 185, 129, 0.3);
 }
 
-/* Base Resets */
+/* Base Resets & Layout Safety */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -79,6 +85,10 @@ body {
   color: var(--text-main);
   line-height: 1.5;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  position: relative;
   transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
@@ -2100,34 +2110,332 @@ body {
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* Responsive */
+/* =======================================================
+   RESPONSIVE DESIGN SYSTEM (Multi-Device Support)
+   ======================================================= */
+
+/* --- Tablet / Medium Devices (1024px and down) --- */
 @media (max-width: 1024px) {
   .store-grid {
     grid-template-columns: 1fr;
+    gap: 1.5rem;
   }
-  .hero-content {
-    grid-template-columns: 1fr;
+
+  .sidebar-workspace {
+    position: static;
+    top: auto;
+    width: 100%;
+  }
+
+  .voice-assistant-hub {
+    padding: 1.25rem 1.5rem;
+  }
+
+  .hub-main-interface {
+    gap: 1.5rem;
+  }
+
+  .category-icon-rail {
+    padding-bottom: 0.5rem;
   }
 }
 
+/* --- Mobile Landscape & Large Phones (768px and down) --- */
 @media (max-width: 768px) {
-  .header-inner {
-    grid-template-columns: 1fr auto;
+  .main-header {
+    padding: 0.6rem 1rem;
   }
+
+  .header-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 100%;
+  }
+
+  .header-left-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  /* Make header elements wrap cleanly */
+  .header-inner {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem 0.5rem;
+  }
+
   .header-left {
     grid-column: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
   }
+
   .header-right {
     grid-column: 2;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
   }
+
   .header-center {
     grid-column: 1 / -1;
-    order: 3;
-    margin-top: 0.5rem;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 0.2rem;
   }
-  .hide-mobile { display: none; }
-  .voice-picker-pill { display: none; }
+
+  .search-bar-container {
+    width: 100%;
+  }
+
+  .search-bar-container input {
+    width: 100%;
+    font-size: 0.82rem;
+    padding-left: 2.2rem;
+    padding-right: 2.6rem;
+  }
+
+  .hide-mobile {
+    display: none !important;
+  }
+
+  .location-picker {
+    display: none;
+  }
+
+  .voice-picker-pill {
+    display: none;
+  }
+
+  .lang-picker-pill {
+    padding: 0.25rem 0.45rem;
+    font-size: 0.72rem;
+  }
+
+  .site-wrapper {
+    padding: 0.85rem 0.85rem 2.5rem;
+  }
+
+  /* Voice Assistant Hub Adaptation */
+  .voice-assistant-hub {
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    margin-bottom: 1.25rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .hub-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .hub-main-interface {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .hub-orb-wrapper {
+    flex-direction: row;
+    justify-content: center;
+    gap: 1rem;
+  }
+
+  .hub-voice-orb {
+    width: 68px;
+    height: 68px;
+  }
+
+  .orb-core-btn {
+    width: 56px;
+    height: 56px;
+    font-size: 1.3rem;
+  }
+
+  .hub-speech-panel {
+    padding: 0.85rem 1rem;
+  }
+
+  .hub-dialogue-top {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .hub-waveform-box {
+    width: 100%;
+    max-width: 220px;
+    height: 32px;
+  }
+
+  .bubble-content {
+    font-size: 0.85rem;
+    padding: 0.6rem 0.85rem;
+  }
+
+  .hub-suggestion-chips {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 0.4rem;
+    width: 100%;
+  }
+
+  .hub-cmd-chip {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    font-size: 0.75rem;
+    padding: 0.35rem 0.75rem;
+  }
+
+  .products-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .product-card {
+    padding: 0.65rem;
+  }
+
+  .card-img-wrapper {
+    height: 120px;
+  }
+
+  .card-title {
+    font-size: 0.82rem;
+    height: 2rem;
+  }
+
+  .current-price {
+    font-size: 0.92rem;
+  }
+
+  .btn-blinkit-add {
+    padding: 0.3rem 0.8rem;
+    font-size: 0.76rem;
+  }
+
+  /* Cart Drawer Fullscreen on Mobile */
+  .cart-drawer {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0 !important;
+  }
+
+  .cart-drawer-header,
+  .cart-drawer-body,
+  .cart-drawer-footer {
+    padding: 1rem;
+  }
+
+  .cart-drawer-footer {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-container {
+    width: 94vw !important;
+    max-width: 94vw !important;
+    padding: 1.25rem !important;
+  }
+}
+
+/* --- Small Mobile Devices (480px and down) --- */
+@media (max-width: 480px) {
+  .logo-main {
+    font-size: 1.15rem;
+  }
+
+  .logo-badge {
+    width: 32px;
+    height: 32px;
+    font-size: 1rem;
+  }
+
+  .delivery-time-badge {
+    display: none;
+  }
+
+  .header-cart-btn {
+    padding: 0.4rem 0.75rem;
+  }
+
+  .cart-btn-info {
+    display: none;
+  }
+
+  .category-icon-rail {
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+  }
+
+  .cat-pill-item {
+    min-width: 68px;
+  }
+
+  .cat-img-box {
+    width: 46px;
+    height: 46px;
+  }
+
+  .cat-pill-item span {
+    font-size: 0.65rem;
+  }
+
   .products-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+  }
+
+  .filter-controls-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .dietary-chips-row {
+    overflow-x: auto;
+    width: 100%;
+    padding-bottom: 0.2rem;
+  }
+
+  .diet-chip {
+    flex: 0 0 auto;
+  }
+
+  .toast-container {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+
+  .toast {
+    min-width: unset;
+    width: 100%;
+  }
+}
+
+/* --- Ultra Small Phones (360px and down) --- */
+@media (max-width: 360px) {
+  .products-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-card {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 0.6rem;
+  }
+
+  .card-img-wrapper {
+    height: 90px;
+    margin-bottom: 0;
   }
 }
